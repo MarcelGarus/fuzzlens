@@ -16,7 +16,11 @@ public class Universe {
     }
 
     public ObjectId createObject() {
-        var id = new ObjectId(objects.size());
+        var index = objects.size();
+        while (objects.containsKey(new ObjectId(index))) {
+            index++;
+        }
+        var id = new ObjectId(index);
         objects.put(id, new Object());
         return id;
     }
