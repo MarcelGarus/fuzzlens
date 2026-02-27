@@ -126,8 +126,12 @@ public class Trace {
         return (int) entries.stream().filter(entry -> entry instanceof Decision).count();
     }
 
-    public Trace rethinkLastDecision(Random random) {
+    public Trace rethinkLastDecisions(Random random) {
         var decisionsToKeep = numDecisions() - 1;
+        while (decisionsToKeep > 0) {
+            if (random.nextBoolean()) break;
+            decisionsToKeep--;
+        }
         var newTrace = new Trace();
         var numDecisionsSoFar = 0;
         for (var entry : entries) {
