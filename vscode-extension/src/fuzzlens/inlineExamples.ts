@@ -142,7 +142,6 @@ const addInlineExamplesFromAnalysis = (
     if (!editor) { return; }
 
     const maxExamples = getMaxInlineExamples();
-    const maxLength = getMaxInlineExampleLength();
 
     // Collect top examples - check both root results and children recursively
     const examples: string[] = [];
@@ -153,7 +152,7 @@ const addInlineExamplesFromAnalysis = (
         // First try direct results
         if (g.samples && g.samples.length > 0) {
             for (const result of g.samples.slice(0, maxExamples - examples.length)) {
-                const exampleStr = resultToDecorationString(result, maxLength);
+                const exampleStr = resultToDecorationString(result);
                 if (exampleStr) {
                     examples.push(exampleStr);
                 }
@@ -197,7 +196,6 @@ const addInlineExamplesFromRuns = (ctx: FuzzLensContext, results: RunResult[], f
     }
 
     const maxExamples = getMaxInlineExamples();
-    const maxLength = getMaxInlineExampleLength();
 
     // Pick diverse examples (first, last, and some in between)
     const examples: string[] = [];
@@ -205,7 +203,7 @@ const addInlineExamplesFromRuns = (ctx: FuzzLensContext, results: RunResult[], f
 
     for (const idx of indices) {
         const result = results[idx];
-        const exampleStr = resultToDecorationString(result, maxLength);
+        const exampleStr = resultToDecorationString(result);
         if (exampleStr) {
             examples.push(exampleStr);
         }
@@ -290,7 +288,7 @@ const selectDiverseIndices = (total: number, count: number): number[] => {
     return indices;
 };
 
-const resultToDecorationString = (result: RunResult | RunResultInGroup, maxLength: number = 40): string => {
+const resultToDecorationString = (result: RunResult | RunResultInGroup, maxLength: number = 500): string => {
     const inputValue = valueToString(result.input, result.universe);
 
     let decorationStr: string;
@@ -301,10 +299,7 @@ const resultToDecorationString = (result: RunResult | RunResultInGroup, maxLengt
         decorationStr = `${inputValue} → ${valueAndTypeNameToString(result.value!, result.typeName!)}`;
     }
 
-    // Truncate if exceeds maxLength
-    if (decorationStr.length > maxLength) {
-        return decorationStr.substring(0, maxLength - 3) + '...';
-    }
+    // Don't truncate here - let applyDecoration handle truncation based on line length
     return decorationStr;
 };
 
@@ -346,11 +341,8 @@ const valueToString = (input: Value | Partial<Value>, universe: Universe): strin
             if (objDef) {
                 const members = Object.entries(objDef.members);
                 if (members.length === 0) { return '{}'; }
-                if (members.length <= 2) {
-                    const memberStrings = members.map(([key, val]) => `${key}: ${valueToString(val, universe)}`);
-                    return `{${memberStrings.join(', ')}}`;
-                }
-                return `{...${members.length}}`;
+                const memberStrings = members.map(([key, val]) => `${key}: ${valueToString(val, universe)}`);
+                return `{${memberStrings.join(', ')}}`;
             }
         }
         return '{}';
@@ -373,9 +365,6 @@ const valueToString = (input: Value | Partial<Value>, universe: Universe): strin
             return fixed;
         case 'String':
             const strVal = (input as { type: 'String'; value: string }).value;
-            if (strVal.length > 15) {
-                return `"${strVal.substring(0, 12)}..."`;
-            }
             return `"${strVal}"`;
         case 'Object':
             const objId = (input as { type: 'Object'; id: { value: number } }).id.value;
@@ -383,11 +372,8 @@ const valueToString = (input: Value | Partial<Value>, universe: Universe): strin
             if (objDef) {
                 const members = Object.entries(objDef.members);
                 if (members.length === 0) { return '{}'; }
-                if (members.length <= 2) {
-                    const memberStrings = members.map(([key, val]) => `${key}: ${valueToString(val, universe)}`);
-                    return `{${memberStrings.join(', ')}}`;
-                }
-                return `{...${members.length}}`;
+                const memberStrings = members.map(([key, val]) => `${key}: ${valueToString(val, universe)}`);
+                return `{${memberStrings.join(', ')}}`;
             }
             return 'Object';
         default:

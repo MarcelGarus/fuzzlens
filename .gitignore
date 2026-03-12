@@ -44,6 +44,8 @@ target/
 .dir-locals-2.el
 classpath
 
+.mypy_cache/
+
 graal_dumps/
 
 vscode-extension/node_modules/
