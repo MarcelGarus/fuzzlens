@@ -1,5 +1,33 @@
 # Bugs and TODOs in GraalFuzz Fuzzer
 
+## Empty Objects are not shown in table mapping
+```python
+    def rgb_to_hex(color):
+        r, g, b = _validate_rgb_components(color.r, color.g, color.b)
+        if color.a is not None:
+            a = _normalize_alpha(color.a)
+            a_int = int(round(a * 255))
+            return f"#{r:02x}{g:02x}{b:02x}{a_int:02x}"
+        return f"#{r:02x}{g:02x}{b:02x}"
+```
+
+Then type mapping is:
+```
+    {
+        a: string, 
+        b: null | boolean | int | double | string, 
+        g: null | boolean | int | double | string, 
+        r: null | boolean | int | double | string
+    } → Crash (×361)
+    {
+        a: null | boolean | int | double, 
+        b: boolean | int | double, 
+        g: boolean | int | double, 
+        r: boolean
+    } → str (×294)
+```
+But this is missing `a: string | {}` which is found in the logs but disregarded during the union merging.
+
 ## Python Dictionary/List subscripting error
 
 When running the fuzzer on the following code, the following error occurs:

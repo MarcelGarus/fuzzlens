@@ -18,7 +18,7 @@ public class Pool {
         public PoolEntry(Trace trace, Coverage coverage) {
             this.trace = trace;
             this.coverage = coverage;
-            this.quality = coverage.getCovered().size() * 10.0 + trace.entries.size();
+            this.quality = Math.pow(2, coverage.getCovered().size() * 10.0 + trace.entries.size());
         }
     }
 
@@ -43,14 +43,14 @@ public class Pool {
     }
 
     public Trace createNewTrace() {
-        if (entries.isEmpty() || random.nextDouble() < 0.1) {
+        if (entries.isEmpty() || random.nextDouble() < 0.01) {
             var trace = new Trace();
             trace.add(new Call((new Universe()).generateValue(random)));
             return trace;
         }
 
         while (true) {
-            var newTrace = selectWeightedEntry().trace.rethinkLastDecision(random);
+            var newTrace = selectWeightedEntry().trace.rethinkLastDecisions(random);
             if (isWorthExploring(newTrace)) {
                 return newTrace;
             }

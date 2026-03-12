@@ -1,22 +1,29 @@
 import * as vscode from "vscode";
-import { createState, IProcessState, IState } from "./state";
+import { createState, ProcessState, FuzzerState } from "./state";
+import { TreeProviders } from "./providers";
 
-export interface IExtensionContext {
-    context: vscode.ExtensionContext;
+export interface FuzzLensContext {
+    vscode: vscode.ExtensionContext;
     output: vscode.OutputChannel;
-    state: IState;
-    events: IEvents;
+    state: FuzzerState;
+    events: FuzzLensEvents;
+    providers: TreeProviders;
 }
 
-export interface IEvents {
-    onFuzzerResultsReady: vscode.EventEmitter<IProcessState>;
+export interface FuzzLensEvents {
+    onFuzzerResultsReady: vscode.EventEmitter<ProcessState>;
+    onInlineExamplesToggled: vscode.EventEmitter<boolean>;
+    onFunctionSelected: vscode.EventEmitter<{ filePath: string; functionName: string }>;
 }
 
-export const createContext = ({ context }: { context: vscode.ExtensionContext }): IExtensionContext => ({
-    context,
-    output: vscode.window.createOutputChannel('GraalFuzz Fuzzer'),
+export const createContext = ({ context, providers }: { context: vscode.ExtensionContext; providers: TreeProviders }): FuzzLensContext => ({
+    vscode: context,
+    output: vscode.window.createOutputChannel('FuzzLens'),
     state: createState(),
     events: {
-        onFuzzerResultsReady: new vscode.EventEmitter<IProcessState>(),
+        onFuzzerResultsReady: new vscode.EventEmitter<ProcessState>(),
+        onInlineExamplesToggled: new vscode.EventEmitter<boolean>(),
+        onFunctionSelected: new vscode.EventEmitter<{ filePath: string; functionName: string }>(),
     },
+    providers,
 });

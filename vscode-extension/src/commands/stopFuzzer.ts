@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 
-import { cleanup } from '../fuzzer/process';
-import { IExtensionContext } from '../types/context';
+import { cleanup } from '../services/fuzzer';
+import { FuzzLensContext } from '../types/context';
 
-export default (ctx: IExtensionContext) => async () => {
+export default (ctx: FuzzLensContext) => async () => {
     try {
-        if (ctx.state.processes) {
+        if (ctx.state.runningProcesses.size > 0) {
             cleanup(ctx.state);
             vscode.window.showInformationMessage('Fuzzer process terminated.');
         } else {

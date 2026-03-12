@@ -1,7 +1,7 @@
 {
   "name": "graalfuzz",
-  "displayName": "graalfuzz",
-  "description": "Finding input/output-pair examples for dynamic languages using fuzzing through GraalVM.",
+  "displayName": "FuzzLens",
+  "description": "Observe types & explore input/output-pair examples for dynamic languages using fuzzing through GraalVM.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.105.0"
@@ -13,16 +13,206 @@
   "contributes": {
     "commands": [
       {
-        "command": "graalfuzz.runFuzzerOnCurrentFile",
-        "title": "GraalFuzz: Run Fuzzer on Current File"
+        "command": "fuzzlens.runFuzzer",
+        "title": "FuzzLens: Run Fuzzer",
+        "icon": "$(play)"
       },
       {
-        "command": "graalfuzz.runFuzzerOnSelection",
-        "title": "GraalFuzz: Run Fuzzer on Selected Code"
+        "command": "fuzzlens.runFuzzerOnFunction",
+        "title": "FuzzLens: Fuzz Function",
+        "icon": "$(play)"
       },
       {
-        "command": "graalfuzz.stopFuzzer",
-        "title": "GraalFuzz: Stop Fuzzer"
+        "command": "fuzzlens.rerunFuzzer",
+        "title": "FuzzLens: Re-run Fuzzer",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "fuzzlens.stopFuzzer",
+        "title": "FuzzLens: Stop Fuzzer",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "fuzzlens.openQueryEditor",
+        "title": "FuzzLens: Open Query Editor",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "fuzzlens.toggleInlineExamples",
+        "title": "FuzzLens: Toggle Inline Examples"
+      },
+      {
+        "command": "fuzzlens.nextExample",
+        "title": "FuzzLens: Next Inline Example"
+      },
+      {
+        "command": "fuzzlens.prevExample",
+        "title": "FuzzLens: Previous Inline Example"
+      },
+      {
+        "command": "fuzzlens.pauseRotation",
+        "title": "FuzzLens: Pause Example Rotation"
+      },
+      {
+        "command": "fuzzlens.resumeRotation",
+        "title": "FuzzLens: Resume Example Rotation"
+      },
+      {
+        "command": "fuzzlens.refresh",
+        "title": "FuzzLens: Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fuzzlens",
+          "title": "FuzzLens",
+          "icon": "$(beaker)"
+        }
+      ]
+    },
+    "views": {
+      "fuzzlens": [
+        {
+          "id": "fuzzlens.functions",
+          "name": "Functions",
+          "contextualTitle": "FuzzLens Functions",
+          "icon": "$(symbol-function)"
+        },
+        {
+          "id": "fuzzlens.results",
+          "name": "Results",
+          "contextualTitle": "FuzzLens Results",
+          "icon": "$(graph)"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "fuzzlens.runFuzzer",
+          "when": "editorLangId =~ /python|javascript|typescript/ && editorTextFocus",
+          "group": "fuzzlens@1",
+          "title": "FuzzLens: Fuzz Function"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "fuzzlens.refresh",
+          "when": "view == fuzzlens.functions",
+          "group": "navigation"
+        },
+        {
+          "command": "fuzzlens.openQueryEditor",
+          "when": "view == fuzzlens.results",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "fuzzlens.runFuzzerOnFunction",
+          "when": "view == fuzzlens.functions && viewItem =~ /^function-/",
+          "group": "inline"
+        },
+        {
+          "command": "fuzzlens.runFuzzerOnFunction",
+          "when": "view == fuzzlens.functions && viewItem =~ /^function-/",
+          "group": "fuzzlens@1",
+          "title": "FuzzLens: Fuzz Function"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "FuzzLens",
+      "properties": {
+        "fuzzlens.showInlineExamples": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline example decorations next to function definitions"
+        },
+        "fuzzlens.maxInlineExamples": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum number of inline examples to show per function"
+        },
+        "fuzzlens.maxInlineExampleLength": {
+          "type": "number",
+          "default": 40,
+          "minimum": 10,
+          "maximum": 100,
+          "description": "Maximum character length for inline example text (truncated with ...)"
+        },
+        "fuzzlens.iterations": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "Number of fuzzing iterations to run"
+        },
+        "fuzzlens.inlineExamples.autoRotate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically rotate inline examples on start"
+        },
+        "fuzzlens.inlineExamples.rotationInterval": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "maximum": 30000,
+          "description": "Interval in milliseconds between example rotations"
+        },
+        "fuzzlens.cacheSize": {
+          "type": "number",
+          "default": 50,
+          "minimum": 10,
+          "maximum": 500,
+          "description": "Maximum number of function results to cache"
+        },
+        "fuzzlens.explorer.ignoredFolders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "node_modules",
+            "__pycache__",
+            "venv",
+            ".venv",
+            "dist",
+            "build",
+            "target",
+            "out",
+            ".git",
+            ".svn",
+            ".hg",
+            "coverage",
+            ".nyc_output",
+            ".pytest_cache",
+            ".mypy_cache",
+            "egg-info"
+          ],
+          "description": "Folder names to ignore when scanning workspace for supported files"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "fuzzlens.nextExample",
+        "key": "alt+.",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "fuzzlens.prevExample",
+        "key": "alt+,",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "fuzzlens.pauseRotation",
+        "key": "alt+/",
+        "when": "editorTextFocus"
       }
     ]
   },
