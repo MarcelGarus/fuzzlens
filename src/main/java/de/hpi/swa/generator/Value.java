@@ -99,11 +99,15 @@ public sealed interface Value {
 
     public static String format(Value value, Universe universe) {
         var builder = new StringBuilder();
-        format(value, universe, builder);
+        format(value, universe, 0, builder);
         return builder.toString();
     }
 
-    static void format(Value value, Universe universe, StringBuilder builder) {
+    static void format(Value value, Universe universe, int depth, StringBuilder builder) {
+        if (depth > 5) {
+            builder.append("...");
+            return;
+        }
         switch (value) {
             case Value.Null() ->
                 builder.append("null");
@@ -127,7 +131,7 @@ public sealed interface Value {
                     }
                     builder.append(member.getKey());
                     builder.append(": ");
-                    format((Value) member.getValue(), universe, builder);
+                    format((Value) member.getValue(), universe, depth + 1, builder);
                 }
                 builder.append("}");
             }
