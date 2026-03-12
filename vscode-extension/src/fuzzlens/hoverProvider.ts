@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { FuzzLensContext } from '../types/context';
 import { getCache } from '../services/cache';
 import { ResultGroup, GroupKey, SingleKey, CompositeKey, Shape } from '../types/state';
-import { formatValue, formatPropertyShapeUnion, formatShapeNew, formatKeyValue } from './formatting';
+import { formatValue, formatShapeNew, formatKeyValue } from './formatting';
 import { getFunctionAtPosition } from '../services/symbols';
 import { getLanguageSelector } from '../config/languages';
 
@@ -215,9 +215,11 @@ export class FuzzLensHoverProvider implements vscode.HoverProvider {
                 const inputShapes = group.aggregations?.['InputShapes'];
 
                 const inputStrFromAgg = inputShapes && typeof inputShapes === 'object'
-                    ? formatPropertyShapeUnion(inputShapes as Record<string, unknown>)
+                    ? this.formatInputShapesMultiline(inputShapes as Record<string, unknown>)
                     : undefined;
-                const inputStr = inputStrFromAgg || keyParts.InputShape || keyParts.inputShape || '—';
+                const inputStr = inputStrFromAgg
+                    || this.formatInlineShapeStringMultiline(keyParts.InputShape || keyParts.inputShape)
+                    || '—';
                 const outputStr = this.sortUnionTypes(
                     this.splitUnionValue(
                         keyParts.OutputTypes || keyParts.outputTypes || keyParts.OutputType || keyParts.outputType || 'unknown'
@@ -225,7 +227,9 @@ export class FuzzLensHoverProvider implements vscode.HoverProvider {
                 ).join(' | ');
                 const countStr = count !== undefined ? `${count}` : `${group.samples?.length ?? 0}`;
 
-                md.appendMarkdown(`- \`${inputStr}\` → \`${outputStr}\` (×${countStr})\n`);
+                md.appendMarkdown(`- Input:\n`);
+                md.appendCodeblock(inputStr, 'text');
+                md.appendMarkdown(`  Output: \`${outputStr}\` (×${countStr})\n`);
             }
             md.appendMarkdown(`\n`);
         }
@@ -339,6 +343,35 @@ export class FuzzLensHoverProvider implements vscode.HoverProvider {
         }
         lines.push('}');
 
+        return lines.join('\n');
+    }
+
+    private formatInlineShapeStringMultiline(inputShape: string | undefined): string | undefined {
+        if (!inputShape) {
+            return undefined;
+        }
+
+        const trimmed = inputShape.trim();
+        if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+            return trimmed;
+        }
+
+        const inner = trimmed.slice(1, -1).trim();
+        if (!inner) {
+            return '{}';
+        }
+
+        const parts = inner.split(', ');
+        if (parts.length <= 1) {
+            return trimmed;
+        }
+
+        const lines = ['{'];
+        for (const [index, part] of parts.entries()) {
+            const suffix = index < parts.length - 1 ? ',' : '';
+            lines.push(`  ${part}${suffix}`);
+        }
+        lines.push('}');
         return lines.join('\n');
     }
 
