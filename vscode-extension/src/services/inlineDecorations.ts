@@ -18,7 +18,11 @@ export const applyDecoration = (editor: vscode.TextEditor, line: number, suggest
     activeDecorations.delete(key);
   }
 
-  const substring = truncateSuggestion(suggestion);
+  // Calculate max length based on existing line content
+  const lineLength = editor.document.lineAt(line).text.length;
+  const maxTotalLength = 180;
+  const availableLength = Math.max(50, maxTotalLength - lineLength); // min 50 chars for decoration
+  const substring = truncateSuggestion(suggestion, availableLength);
   const decorationType = vscode.window.createTextEditorDecorationType({
     after: {
       contentText: ` ${substring}`,
@@ -27,7 +31,6 @@ export const applyDecoration = (editor: vscode.TextEditor, line: number, suggest
     }
   });
 
-  const lineLength = editor.document.lineAt(line).text.length;
   const range = new vscode.Range(
     new vscode.Position(line, lineLength),
     new vscode.Position(line, lineLength)

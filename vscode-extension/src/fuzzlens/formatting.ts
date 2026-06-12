@@ -9,7 +9,7 @@ export interface ShapeValue {
 /**
  * Format a Shape (new discriminated union format from Java serialization).
  */
-export function formatShapeNew(shape: Shape, maxMembers: number = 3): string {
+export function formatShapeNew(shape: Shape, maxMembers: number = 10): string {
     switch (shape.type) {
         case 'Null':
             return 'null';
@@ -28,11 +28,14 @@ export function formatShapeNew(shape: Shape, maxMembers: number = 3): string {
             }
             if (members.length <= maxMembers) {
                 const memberStrs = members.map(([key, val]) => {
-                    return `${key}: ${formatShapeNew(val, 1)}`;
+                    return `${key}: ${formatShapeNew(val, maxMembers)}`;
                 });
                 return `{${memberStrs.join(', ')}}`;
             }
-            return `{${members.length} fields}`;
+            const memberStrs = members.slice(0, maxMembers).map(([key, val]) => {
+                return `${key}: ${formatShapeNew(val, maxMembers)}`;
+            });
+            return `{${memberStrs.join(', ')}, +${members.length - maxMembers}}`;
         }
     }
 }
@@ -41,20 +44,42 @@ export function formatShapeNew(shape: Shape, maxMembers: number = 3): string {
  * Format a property shape union (Map<String, Set<Shape>>) from observedSignature aggregation.
  */
 export function formatPropertyShapeUnion(inputShapes: Record<string, unknown>): string {
+    const sortUnionTypes = (types: string[]): string[] => {
+        const rank = (t: string): number => {
+            const normalized = t.toLowerCase();
+            if (normalized === 'null') { return 0; }
+            if (normalized === 'boolean' || normalized === 'bool') { return 1; }
+            if (normalized === 'int') { return 2; }
+            if (normalized === 'double' || normalized === 'float') { return 3; }
+            if (normalized === 'string' || normalized === 'str') { return 4; }
+            if (normalized === 'crash') { return 999; }
+            return 100;
+        };
+
+        return Array.from(new Set(types)).sort((a, b) => {
+            const rankDiff = rank(a) - rank(b);
+            if (rankDiff !== 0) {
+                return rankDiff;
+            }
+            return a.localeCompare(b);
+        });
+    };
+
     // Handle the special __type__ key for primitives
     if (Object.keys(inputShapes).length === 1 && inputShapes['__type__']) {
         const shapes = inputShapes['__type__'] as Shape[];
         if (Array.isArray(shapes)) {
-            return shapes.map(s => formatShapeNew(s)).join(' | ');
+            return sortUnionTypes(shapes.map(s => formatShapeNew(s))).join(' | ');
         }
     }
 
     // Handle object properties
     const entries = Object.entries(inputShapes)
         .filter(([key]) => key !== '__type__')
+        .sort(([a], [b]) => a.localeCompare(b))
         .map(([key, shapes]) => {
             if (Array.isArray(shapes)) {
-                const shapeStrs = (shapes as Shape[]).map(s => formatShapeNew(s, 1)).join(' | ');
+                const shapeStrs = sortUnionTypes((shapes as Shape[]).map(s => formatShapeNew(s, 1))).join(' | ');
                 return `${key}: ${shapeStrs}`;
             }
             return `${key}: unknown`;
@@ -74,7 +99,7 @@ export function formatPropertyShapeUnion(inputShapes: Record<string, unknown>): 
  * // id=1, universe: { objects: { $1: { members: { a: Int, b: Object#2 } }, $2: { members: { c: String } } } }
  * formatShape({ id: { value: 1 }, universe }) // => "{a: int, b: {c: str}}"
  */
-export function formatShape(shape: ShapeValue, maxMembers: number = 2): string {
+export function formatShape(shape: ShapeValue, maxMembers: number = 10): string {
     if (!shape.id || !shape.universe) {
         return 'primitive';
     }
@@ -93,7 +118,11 @@ export function formatShape(shape: ShapeValue, maxMembers: number = 2): string {
         return `{${memberStrs.join(', ')}}`;
     }
 
-    return `{${members.length} fields}`;
+    const memberStrs = members.slice(0, maxMembers).map(([key, val]) => {
+        const typeStr = formatValueType(val, shape.universe!);
+        return `${key}: ${typeStr}`;
+    });
+    return `{${memberStrs.join(', ')}, +${members.length - maxMembers}}`;
 }
 
 /**
@@ -109,7 +138,7 @@ export function formatValue(
     universe: Universe,
     options: { maxStringLength?: number; maxMembers?: number } = {}
 ): string {
-    const { maxStringLength = 10, maxMembers = 2 } = options;
+    const { maxStringLength = 80, maxMembers = 10 } = options;
 
     if (!value || Object.keys(value).length === 0) {
         return '{}';
@@ -129,7 +158,10 @@ export function formatValue(
                 );
                 return `{${memberStrs.join(', ')}}`;
             }
-            return `{...${members.length}}`;
+            const memberStrs = members.slice(0, maxMembers).map(([key, val]) =>
+                `${key}: ${formatValue(val, universe, options)}`
+            );
+            return `{${memberStrs.join(', ')}, +${members.length - maxMembers}}`;
         }
         return `Object#${value.id.value}`;
     }
@@ -430,15 +462,11 @@ function formatShapeToTypeString(shape: unknown): string {
             if (objDef) {
                 const keys = Object.keys(objDef.members);
                 if (keys.length === 0) { return '{}'; }
-                if (keys.length <= 2) {
-                    const parts = keys.map(k => {
-                        const memberVal = objDef.members[k];
-                        // Recursively format, passing universe context
-                        return `${k}: ${formatShapeToTypeString({ ...memberVal, universe })}`;
-                    });
-                    return `{${parts.join(', ')}}`;
-                }
-                return `{${keys.length} fields}`;
+                const parts = keys.map(k => {
+                    const memberVal = objDef.members[k];
+                    return `${k}: ${formatShapeToTypeString({ ...memberVal, universe })}`;
+                });
+                return `{${parts.join(', ')}}`;
             }
             return `obj#${id.value}`;
         }
@@ -460,14 +488,11 @@ function formatShapeToTypeString(shape: unknown): string {
                         if (objDef) {
                             const keys = Object.keys(objDef.members);
                             if (keys.length === 0) { return '{}'; }
-                            if (keys.length <= 2) {
-                                const parts = keys.map(k => {
-                                    const memberVal = objDef.members[k];
-                                    return `${k}: ${formatShapeToTypeString({ ...memberVal, universe })}`;
-                                });
-                                return `{${parts.join(', ')}}`;
-                            }
-                            return `{${keys.length} fields}`;
+                            const parts = keys.map(k => {
+                                const memberVal = objDef.members[k];
+                                return `${k}: ${formatShapeToTypeString({ ...memberVal, universe })}`;
+                            });
+                            return `{${parts.join(', ')}}`;
                         }
                     }
                     return s.id ? `obj#${(s.id as { value: number }).value}` : 'object';
@@ -479,11 +504,8 @@ function formatShapeToTypeString(shape: unknown): string {
             const members = s.members as Record<string, unknown>;
             const keys = Object.keys(members);
             if (keys.length === 0) { return '{}'; }
-            if (keys.length <= 2) {
-                const parts = keys.map(k => `${k}: ${formatShapeToTypeString(members[k])}`);
-                return `{${parts.join(', ')}}`;
-            }
-            return `{${keys.length} fields}`;
+            const parts = keys.map(k => `${k}: ${formatShapeToTypeString(members[k])}`);
+            return `{${parts.join(', ')}}`;
         }
     }
     
