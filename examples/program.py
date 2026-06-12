@@ -6,5 +6,3 @@ def foo(a):
     else:
         z = 7 - 8
         return 123
-
-foo

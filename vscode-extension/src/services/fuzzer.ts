@@ -34,7 +34,7 @@ export const spawnGraalFuzzProcess = (extensionPath: string, file: string, toJSO
     const script = isWin
         ? path.join(extensionPath, '..', 'graalfuzz.cmd')
         : path.join(extensionPath, '..', 'graalfuzz.sh');
-    args = ['--file', `"${file}"`, '--no-color', ...args];
+    args = ['--file', `${file}`, '--no-color', ...args];
 
     if (toJSON) {
         args.push('--tooling');

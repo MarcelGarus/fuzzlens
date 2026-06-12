@@ -1,18 +1,20 @@
-function sum(list) {
-    var sum = 0;
-    for (item of list) {
-        sum += item;
-    }
-    return sum;
+function foo(point) {
+    if (point.x > 2)
+        return point.x * 2;
+    return point.y;
 }
 
-function length(list) {
-    if (!list) return 0;
-    1 + length(list.next);
+function length(linkedList) {
+    if (!linkedList) return 0;
+    1 + length(linkedList.next);
 }
 
-function isLong(list) {
-    return length(list) > 5;
+function isLong(linkedList) {
+    return length(linkedList) > 5;
 }
 
-isLong
+function distance(points) {
+    const a = points.a;
+    const b = points.b;
+    return Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+}
