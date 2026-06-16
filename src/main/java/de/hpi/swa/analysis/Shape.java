@@ -1,4 +1,4 @@
-package de.hpi.swa.analysis.query;
+package de.hpi.swa.analysis;
 
 import java.util.List;
 import java.util.Set;

@@ -2,7 +2,7 @@ package de.hpi.swa.serialization;
 
 import com.google.gson.*;
 
-import de.hpi.swa.analysis.query.Shape;
+import de.hpi.swa.analysis.Shape;
 
 import java.lang.reflect.Type;
 

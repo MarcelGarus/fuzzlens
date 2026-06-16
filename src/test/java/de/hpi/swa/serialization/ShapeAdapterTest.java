@@ -4,7 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-import de.hpi.swa.analysis.query.Shape;
+import de.hpi.swa.analysis.Shape;
 import de.hpi.swa.generator.Universe;
 import de.hpi.swa.generator.Value;
 

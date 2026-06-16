@@ -56,10 +56,9 @@ export interface AnalysisOutput {
 
 /** A group from query results */
 export interface ResultGroup {
-    key: GroupKey;
+    /** Display label for the group (Java produces a ready-to-show string). */
+    key: string;
     samples?: RunResultInGroup[];
-    score: number;
-    groupScores: Record<string, number>;
     children?: ResultGroup[];
     aggregations?: Record<string, unknown>;
 }

@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { FunctionInfo, ResultGroup, RunResult, Value, Universe, GroupKey, SingleKey, CompositeKey, KeyPart, ProcessState, ShapeValue, RunResultInGroup } from '../types/state';
+import { FunctionInfo, ResultGroup, RunResult, ProcessState, RunResultInGroup } from '../types/state';
 import { getCache } from '../services/cache';
 import { FuzzLensContext } from '../types/context';
-import { formatShape, formatValue, formatShapeNew, formatGroupKey } from './formatting';
+import { formatValue } from './formatting';
 import { isSupportedFile, SUPPORTED_FILES_GLOB } from '../config/languages';
 import { shouldIgnoreFolder } from '../config/defaults';
 import { discoverFunctionsInFile } from '../services/symbols';
@@ -113,7 +113,7 @@ export class ResultGroupItem extends vscode.TreeItem {
         public readonly depth: number = 0
     ) {
         super(
-            formatGroupKey(group.key),
+            group.key,
             (group.samples && group.samples.length > 0) || (group.children && group.children.length > 0)
                 ? vscode.TreeItemCollapsibleState.Collapsed
                 : vscode.TreeItemCollapsibleState.None

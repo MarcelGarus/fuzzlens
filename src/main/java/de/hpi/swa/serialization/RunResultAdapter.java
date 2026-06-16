@@ -2,6 +2,7 @@ package de.hpi.swa.serialization;
 
 import com.google.gson.*;
 
+import de.hpi.swa.generator.Run;
 import de.hpi.swa.generator.Runner;
 import de.hpi.swa.generator.Trace;
 import de.hpi.swa.generator.Universe;
@@ -9,10 +10,10 @@ import de.hpi.swa.generator.Value;
 
 import java.lang.reflect.Type;
 
-public class RunResultAdapter implements JsonSerializer<Runner.RunResult>, JsonDeserializer<Runner.RunResult> {
+public class RunResultAdapter implements JsonSerializer<Run>, JsonDeserializer<Run> {
 
     @Override
-    public JsonElement serialize(Runner.RunResult src, Type typeOfSrc, JsonSerializationContext context) {
+    public JsonElement serialize(Run src, Type typeOfSrc, JsonSerializationContext context) {
         JsonObject result = new JsonObject();
         
         result.add("universe", context.serialize(src.universe()));
@@ -38,7 +39,7 @@ public class RunResultAdapter implements JsonSerializer<Runner.RunResult>, JsonD
     }
 
     @Override
-    public Runner.RunResult deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) 
+    public Run deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) 
             throws JsonParseException {
         JsonObject obj = json.getAsJsonObject();
         // deserialize normally except for output
@@ -57,6 +58,6 @@ public class RunResultAdapter implements JsonSerializer<Runner.RunResult>, JsonD
             );
             default -> throw new JsonParseException("Unknown output type");
         };
-        return new Runner.RunResult(universe, input, output, trace);
+        return new Run(universe, input, output, trace, new de.hpi.swa.coverage.Coverage());
     }
 }

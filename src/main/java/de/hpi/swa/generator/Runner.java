@@ -5,6 +5,8 @@ import java.util.Random;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.proxy.ProxyObject;
 
+import de.hpi.swa.coverage.Coverage;
+
 import de.hpi.swa.generator.Trace.Call;
 import de.hpi.swa.generator.Trace.Crash;
 import de.hpi.swa.generator.Trace.Return;
@@ -21,12 +23,16 @@ public abstract class Runner {
         return trace;
     }
 
-    public static RunResult run(org.graalvm.polyglot.Value function, Trace startingWith, Random random) {
+    public static Run run(org.graalvm.polyglot.Value function, Trace startingWith, Random random) {
+        return run(function, startingWith, random, new Coverage());
+    }
+
+    public static Run run(org.graalvm.polyglot.Value function, Trace startingWith, Random random, Coverage coverage) {
         var universe = startingWith.toUniverse();
         var input = ((Call) startingWith.entries.get(0)).arg();
         var trace = new Trace();
         var output = run(function, universe, input, trace, random);
-        return new RunResult(universe, input, output, trace);
+        return new Run(universe, input, output, trace, coverage);
     }
 
     public sealed interface FunctionResult {
@@ -35,35 +41,13 @@ public abstract class Runner {
 
         record Crash(String message, java.util.List<String> stackTrace) implements FunctionResult {
         }
-    }
 
-    public record RunResult(Universe universe, Value input, FunctionResult output, Trace trace) {
-
-        public Universe getUniverse() {
-            return universe;
-        }
-
-        public Value getInput() {
-            return input;
-        }
-
-        public FunctionResult getOutput() {
-            return output;
-        }
-
-        public boolean didCrash() {
-            return switch (output) {
-                case FunctionResult.Crash(var msg, var stackTrace) -> true;
-                default -> false;
+        /** Display label used for grouping: the concrete type name, or "Crash". */
+        default String label() {
+            return switch (this) {
+                case Normal n -> n.typeName();
+                case Crash c -> "Crash";
             };
-        }
-
-        public Trace getTrace() {
-            return trace;
-        }
-
-        public RunResult withDeduplicatedTrace() {
-            return new RunResult(universe, input, output, trace.deduplicate());
         }
     }
 

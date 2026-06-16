@@ -11,16 +11,15 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.PolyglotException;
 
-import de.hpi.swa.analysis.AnalysisEngine;
-import de.hpi.swa.analysis.AnalysisEngine.MultiQueryResult;
-import de.hpi.swa.analysis.operations.Grouping.ResultGroup;
-import de.hpi.swa.analysis.query.NamedQuery;
+import de.hpi.swa.analysis.Analysis;
+import de.hpi.swa.analysis.Group;
 import de.hpi.swa.cli.logger.ConsoleLogger;
 import de.hpi.swa.cli.logger.JsonLogger;
 import de.hpi.swa.cli.logger.ResultLogger;
 import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.coverage.CoverageInstrument;
 import de.hpi.swa.generator.Pool;
+import de.hpi.swa.generator.Run;
 import de.hpi.swa.generator.Runner;
 
 public class FuzzMain {
@@ -75,7 +74,7 @@ public class FuzzMain {
                 iterations = Integer.parseInt(a.substring("--iterations=".length()));
             } else if (a.equals("--list-queries")) {
                 System.out.println("Available queries:");
-                for (String name : QueryCatalog.getAvailableNames()) {
+                for (String name : Analysis.available()) {
                     System.out.println("  " + name);
                 }
                 return;
@@ -179,12 +178,12 @@ public class FuzzMain {
         // Fuzzing loop
         var pool = new Pool();
         var random = new Random();
-        List<Runner.RunResult> allResults = new ArrayList<>();
+        List<Run> allResults = new ArrayList<>();
 
         for (int i = 0; i < iterations; i++) {
             var trace = pool.createNewTrace();
             instrument.coverage = new Coverage();
-            var result = Runner.run(function, trace, random);
+            var result = Runner.run(function, trace, random, instrument.coverage);
             var deduplicatedResult = result.withDeduplicatedTrace();
 
             // Add the entropy and its results to the pool for future selection
@@ -199,29 +198,23 @@ public class FuzzMain {
             return;
         }
 
-        List<NamedQuery> queries = QueryCatalog.getByNames(queryNames);
+        List<String> queries = queryNames.stream().filter(Analysis.available()::contains).toList();
         if (queries.isEmpty()) {
             System.err.println("Warning: No valid queries found for names: " + queryNames);
-            System.err.println("Available queries: " + QueryCatalog.getAvailableNames());
+            System.err.println("Available queries: " + Analysis.available());
             return;
         }
 
         if (queries.size() != queryNames.size()) {
-            System.err.println("Note: Some queries were not found. Requested: " + queryNames + ", Found: " +
-                    queries.stream().map(NamedQuery::name).toList());
+            System.err.println("Note: Some queries were not found. Requested: " + queryNames + ", Found: " + queries);
         }
 
-        System.err.println("Running " + queries.size() + " queries: " +
-                queries.stream().map(NamedQuery::name).toList());
+        System.err.println("Running " + queries.size() + " queries: " + queries);
 
         // Analysis
-        if (queries.size() == 1) {
-            var query = queries.get(0);
-            ResultGroup<?, ?> resultTree = AnalysisEngine.analyze(query.query(), allResults, pool);
-            logger.logAnalysis(query.name(), resultTree);
-        } else {
-            MultiQueryResult multiResult = AnalysisEngine.analyzeMultiple(queries, allResults, pool);
-            logger.logMultipleAnalyses(multiResult);
+        for (String name : queries) {
+            Group result = Analysis.run(name, allResults);
+            logger.logAnalysis(name, result);
         }
     }
 
@@ -243,7 +236,7 @@ public class FuzzMain {
         System.out.println("  -h, --help             Show this help message");
         System.out.println();
         System.out.println("Available queries:");
-        for (String name : QueryCatalog.getAvailableNames()) {
+        for (String name : Analysis.available()) {
             System.out.println("  " + name);
         }
     }
