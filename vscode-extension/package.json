@@ -152,6 +152,11 @@
           "maximum": 10000,
           "description": "Number of fuzzing iterations to run"
         },
+        "fuzzlens.autoFuzzOnView": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start fuzzing a function as soon as it scrolls into view"
+        },
         "fuzzlens.inlineExamples.autoRotate": {
           "type": "boolean",
           "default": true,

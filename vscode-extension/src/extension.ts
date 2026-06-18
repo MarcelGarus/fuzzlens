@@ -10,6 +10,7 @@ import { createContext, FuzzLensContext } from './types/context';
 import { setupFuzzerResultsListener, showNextExample, showPreviousExample, pauseRotation, resumeRotation } from './fuzzlens/inlineExamples';
 import { FunctionsTreeProvider, ResultsTreeProvider } from './fuzzlens/treeView';
 import { registerHoverProvider } from './fuzzlens/hoverProvider';
+import { registerAutoFuzzOnView } from './fuzzlens/autoFuzz';
 import selectFunction from './commands/selectFunction';
 
 // Store for access in deactivate
@@ -39,6 +40,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const hoverProvider = registerHoverProvider(extensionContext);
 
+	const autoFuzzOnView = registerAutoFuzzOnView(extensionContext);
+
 	const fuzzlensRunCmd = vscode.commands.registerCommand('fuzzlens.runFuzzer', runFuzzerOnCurrentFile(extensionContext));
 	const fuzzlensRunOnFunctionCmd = vscode.commands.registerCommand('fuzzlens.runFuzzerOnFunction', runFuzzerOnFunction(extensionContext));
 	const fuzzlensRerunCmd = vscode.commands.registerCommand('fuzzlens.rerunFuzzer', runFuzzerOnFunction(extensionContext));
@@ -67,6 +70,8 @@ export function activate(context: vscode.ExtensionContext) {
 		resultsTreeView,
 		// Hover Provider
 		hoverProvider,
+		// Auto-fuzz functions as they scroll into view
+		autoFuzzOnView,
 		// New FuzzLens commands
 		fuzzlensRunCmd,
 		fuzzlensRunOnFunctionCmd,
