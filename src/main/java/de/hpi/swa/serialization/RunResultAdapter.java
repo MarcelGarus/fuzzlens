@@ -2,6 +2,8 @@ package de.hpi.swa.serialization;
 
 import com.google.gson.*;
 
+import com.oracle.truffle.api.source.SourceSection;
+
 import de.hpi.swa.generator.Run;
 import de.hpi.swa.generator.Runner;
 import de.hpi.swa.generator.Trace;
@@ -9,6 +11,7 @@ import de.hpi.swa.generator.Universe;
 import de.hpi.swa.generator.Value;
 
 import java.lang.reflect.Type;
+import java.util.List;
 
 public class RunResultAdapter implements JsonSerializer<Run>, JsonDeserializer<Run> {
 
@@ -34,7 +37,21 @@ public class RunResultAdapter implements JsonSerializer<Run>, JsonDeserializer<R
         }
 
         result.add("trace", context.serialize(src.trace()));
-        
+
+        // The (1-based) source lines of the fuzzed code that this run executed.
+        // Internal/library sources are excluded so this stays the user's own
+        // lines — enough for the tooling to tell which return statement a run
+        // reached.
+        if (src.coverage() != null) {
+            List<Integer> coveredLines = src.coverage().getCovered().stream()
+                    .filter(s -> s.getSource() != null && !s.getSource().isInternal())
+                    .map(SourceSection::getStartLine)
+                    .distinct()
+                    .sorted()
+                    .toList();
+            result.add("coveredLines", context.serialize(coveredLines));
+        }
+
         return result;
     }
 

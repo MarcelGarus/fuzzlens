@@ -47,6 +47,8 @@ export interface RunResult {
     message?: string;
     stackTrace?: string[];
     trace: Trace;
+    /** 1-based source lines of the fuzzed code this run executed (user code only). */
+    coveredLines?: number[];
 }
 
 /** Analysis query result (type: "analysis") */

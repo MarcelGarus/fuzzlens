@@ -4,6 +4,7 @@ import { applyDecoration, clearDecorations } from "../services/inlineDecorations
 import { FuzzLensContext } from "../types/context";
 import { getFunctionLineByPath, resolveLineNumber, FunctionNotFoundError } from "../services/symbols";
 import { getAutoRotate, getRotationInterval, getShowInlineExamples, getMaxInlineExamples, getMaxInlineExampleLength } from "../config/defaults";
+import { updateReturnExamples } from "./returnExamples";
 
 export const startExampleRotation = (ctx: FuzzLensContext): void => {
     const state = ctx.state.inlineExamples;
@@ -104,6 +105,12 @@ export const handleFuzzerResults = async (ctx: FuzzLensContext, processState: Pr
     logFuzzerResults(ctx.output, runs);
 
     const showInline = getShowInlineExamples();
+
+    // Show an example next to each return statement (independent of the
+    // function-level example below, which has its own early returns).
+    if (showInline) {
+        await updateReturnExamples(ctx, processState);
+    }
 
     if (showInline && processState.analyses) {
         const relevantPairs = processState.analyses.get('relevantPairs');
