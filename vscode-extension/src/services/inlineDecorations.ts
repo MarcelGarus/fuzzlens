@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
 
+// Example "pill" colors.
+const EXAMPLE_FOREGROUND = '#1b5e20'; // dark green text
+const EXAMPLE_BACKGROUND = '#c8e6c9'; // light green background
+
 // Track decoration types for cleanup
 const activeDecorations: Map<string, vscode.TextEditorDecorationType> = new Map();
 
@@ -25,9 +29,16 @@ export const applyDecoration = (editor: vscode.TextEditor, line: number, suggest
   const substring = truncateSuggestion(suggestion, availableLength);
   const decorationType = vscode.window.createTextEditorDecorationType({
     after: {
-      contentText: ` ${substring}`,
-      color: new vscode.ThemeColor('editorLineNumber.foreground'),
-      fontStyle: 'italic'
+      contentText: substring,
+      color: EXAMPLE_FOREGROUND,
+      backgroundColor: EXAMPLE_BACKGROUND,
+      fontStyle: 'italic',
+      // Space between the code and the example pill.
+      margin: '0 0 0 2rem',
+      // ThemableDecorationAttachmentRenderOptions has no padding/border-radius
+      // fields, but `textDecoration` is injected as raw CSS — use it to give the
+      // pill symmetric inner padding and rounded corners.
+      textDecoration: 'none; padding: 1px 8px; border-radius: 4px;'
     }
   });
 
