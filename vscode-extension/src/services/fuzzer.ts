@@ -5,6 +5,7 @@ import { ProcessState, FuzzerState, FuzzerOutput, RunResult, ResultGroup } from 
 import * as fs from 'fs';
 import { FuzzLensContext } from '../types/context';
 import { getCache } from './cache';
+import { getGraalLanguageForFile } from '../config/languages';
 
 export const FUZZLENS_QUERIES = [
     // Hover provider queries
@@ -25,23 +26,34 @@ export interface FuzzLensProcessOptions {
     iterations?: number;
     queries?: string[];
     toJSON?: boolean;
+    /**
+     * Source code to fuzz directly via `--code` instead of reading `file` from
+     * disk. Lets us fuzz the live (possibly unsaved) editor buffer. The `file`
+     * is still used to derive the language and as the cache/state key.
+     */
+    code?: string;
+    /** GraalVM language id (e.g. 'python', 'js'). Derived from `file` if omitted. */
+    language?: string;
 }
 
-export const spawnGraalFuzzProcess = (extensionPath: string, file: string, toJSON: boolean = true, args: string[] = []): ChildProcessWithoutNullStreams => {
+const spawnGraalFuzzWithArgs = (extensionPath: string, args: string[]): ChildProcessWithoutNullStreams => {
     // TODO: Before publishing, move the platform specific native builds into the extension directory. Part of distribution when published.
     // Choose script based on platform
     const isWin = process.platform === 'win32';
     const script = isWin
         ? path.join(extensionPath, '..', 'graalfuzz.cmd')
         : path.join(extensionPath, '..', 'graalfuzz.sh');
-    args = ['--file', `${file}`, '--no-color', ...args];
-
-    if (toJSON) {
-        args.push('--tooling');
-    }
 
     console.log(`Spawning GraalFuzz process: ${script} ${args.join(' ')}`);
     return spawn(script, args, { stdio: 'pipe', shell: isWin, cwd: path.join(extensionPath, '..') });
+};
+
+export const spawnGraalFuzzProcess = (extensionPath: string, file: string, toJSON: boolean = true, args: string[] = []): ChildProcessWithoutNullStreams => {
+    const fullArgs = ['--file', `${file}`, '--no-color', ...args];
+    if (toJSON) {
+        fullArgs.push('--tooling');
+    }
+    return spawnGraalFuzzWithArgs(extensionPath, fullArgs);
 };
 
 export const spawnFuzzerProcess = (extensionPath: string, file: string, functionName?: string, toJSON: boolean = true): ChildProcessWithoutNullStreams => {
@@ -53,7 +65,7 @@ export const spawnFuzzerProcess = (extensionPath: string, file: string, function
 };
 
 export const spawnFuzzLensProcess = (options: FuzzLensProcessOptions): ChildProcessWithoutNullStreams => {
-    const { extensionPath, file, functionName, iterations = 1000, queries = FUZZLENS_QUERIES, toJSON = true } = options;
+    const { extensionPath, file, functionName, code, language, iterations = 1000, queries = FUZZLENS_QUERIES, toJSON = true } = options;
 
     const args = [
         '--iterations', String(iterations),
@@ -62,6 +74,17 @@ export const spawnFuzzLensProcess = (options: FuzzLensProcessOptions): ChildProc
 
     if (functionName) {
         args.push('--function', functionName);
+    }
+
+    // When code is supplied, fuzz it directly (reflects unsaved edits) instead
+    // of reading the file from disk.
+    if (code !== undefined) {
+        const lang = language ?? getGraalLanguageForFile(file) ?? 'python';
+        const fullArgs = ['--language', lang, '--code', code, '--no-color', ...args];
+        if (toJSON) {
+            fullArgs.push('--tooling');
+        }
+        return spawnGraalFuzzWithArgs(extensionPath, fullArgs);
     }
 
     console.log(`Spawning FuzzLens process: ${args.join(' ')}`);
@@ -125,11 +148,20 @@ const PROGRESS_THROTTLE_MS = 300;
  * immediately for analyses) so the UI updates live. `onFuzzerResultsReady` fires
  * once at the end with the final results.
  */
-export const writeProcessOutputToState = (ctx: FuzzLensContext, processState: ProcessState) => {
+export const writeProcessOutputToState = (
+    ctx: FuzzLensContext,
+    processState: ProcessState,
+    options?: { showErrors?: boolean }
+) => {
     const process = processState.process;
     if (!process) {
         throw new Error('No process found in process state.');
     }
+
+    // Auto-triggered runs (on-view, on-edit) pass showErrors=false so transient
+    // failures (e.g. fuzzing half-typed, syntactically-invalid code) don't pop
+    // the output panel.
+    const showErrors = options?.showErrors ?? true;
 
     const runs: RunResult[] = [];
     const analyses = new Map<string, ResultGroup>();
@@ -138,6 +170,12 @@ export const writeProcessOutputToState = (ctx: FuzzLensContext, processState: Pr
 
     // Push the latest accumulated results into the cache and notify listeners.
     const commit = (final: boolean) => {
+        // A run cancelled mid-flight (e.g. superseded by a fresh edit) must not
+        // write its now-stale partial results over the newer run's.
+        if (processState.cancelled) {
+            return;
+        }
+
         // Snapshot so consumers that read asynchronously aren't surprised by later mutation.
         processState.results = Promise.resolve(runs.slice());
 
@@ -234,9 +272,11 @@ export const writeProcessOutputToState = (ctx: FuzzLensContext, processState: Pr
                 ctx.output.appendLine(`[${processState.functionName || 'file'}] stderr:`);
                 ctx.output.appendLine(stderr);
             }
-            if (code !== 0) {
+            if (code !== 0 && !processState.cancelled) {
                 ctx.output.appendLine(`Fuzzer exited with code ${code}`);
-                ctx.output.show(true); // Show output channel on error
+                if (showErrors) {
+                    ctx.output.show(true); // Show output channel on error
+                }
             }
             resolve(stderr);
         });
@@ -254,7 +294,11 @@ export const removeFromStateOnceExited = (processState: ProcessState, state: Fuz
     processState.process.on('exit', () => {
         if (processState.file && processState.functionName) {
             const key = `${processState.file}:${processState.functionName}`;
-            state.runningProcesses.delete(key);
+            // Only clear our own entry — a newer run may have replaced us under
+            // the same key (e.g. after an edit superseded this run).
+            if (state.runningProcesses.get(key) === processState) {
+                state.runningProcesses.delete(key);
+            }
         }
     });
 };

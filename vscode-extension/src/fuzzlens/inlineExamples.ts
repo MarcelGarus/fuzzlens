@@ -115,8 +115,9 @@ export const handleFuzzerResults = async (ctx: FuzzLensContext, processState: Pr
             line = await getFunctionLineByPath(filePath, functionName);
         } catch (error) {
             if (error instanceof FunctionNotFoundError) {
-                console.error(`Function not found for inline examples: ${functionName} in ${filePath}`);
-                vscode.window.showErrorMessage(`Cannot show inline examples: function "${functionName}" not found in file ${filePath}.`);
+                // Can happen transiently while the user is mid-edit; stay quiet
+                // and let the next run resolve it rather than popping a toast.
+                ctx.output.appendLine(`Skipping inline examples: function "${functionName}" not found in ${filePath}.`);
                 return;
             } else {
                 throw error;
@@ -255,6 +256,23 @@ const refreshInlineDecorations = (ctx: FuzzLensContext) => {
         if (exState.filePath === filePath) {
             const resolvedLine = resolveLineNumber(exState.line, editor.document);
             showExampleAtLine(editor, resolvedLine, exState.examples[exState.currentIndex]);
+        }
+    }
+};
+
+/**
+ * Remove inline example decorations and stored state for a single file.
+ * Used when a file is edited so stale (now-wrong) examples don't linger.
+ */
+export const clearInlineExamplesForFile = (ctx: FuzzLensContext, filePath: string) => {
+    const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.fsPath === filePath);
+    if (editor) {
+        clearDecorations(editor);
+    }
+    const state = ctx.state.inlineExamples;
+    for (const key of [...state.examples.keys()]) {
+        if (key.startsWith(filePath + ':')) {
+            state.examples.delete(key);
         }
     }
 };

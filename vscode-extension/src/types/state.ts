@@ -25,6 +25,8 @@ export interface ProcessState {
     stderr?: Promise<string>;
     results?: Promise<RunResult[]>;
     analyses?: Map<string, ResultGroup>;
+    /** Set when a run is superseded (e.g. by a newer edit) so it stops writing results. */
+    cancelled?: boolean;
 }
 
 // === Fuzzer Output Types ===
