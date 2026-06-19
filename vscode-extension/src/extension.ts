@@ -7,7 +7,7 @@ import toggleInlineExamples from './commands/toggleInlineExamples';
 import refresh from './commands/refresh';
 import { cleanup } from './services/fuzzer';
 import { createContext, FuzzLensContext } from './types/context';
-import { setupFuzzerResultsListener, showNextExample, showPreviousExample, pauseRotation, resumeRotation } from './fuzzlens/inlineExamples';
+import { setupFuzzerResultsListener, handleFuzzerResults, showNextExample, showPreviousExample, pauseRotation, resumeRotation } from './fuzzlens/inlineExamples';
 import { FunctionsTreeProvider, ResultsTreeProvider } from './fuzzlens/treeView';
 import { registerHoverProvider } from './fuzzlens/hoverProvider';
 import { registerAutoFuzzOnView } from './fuzzlens/autoFuzz';
@@ -64,6 +64,17 @@ export function activate(context: vscode.ExtensionContext) {
 		extensionContext.providers.resultsTree.setResults(processState);
 	});
 
+	// Live updates while a fuzzer is still running: grow the results tree, show a
+	// running run-count in the functions tree, and surface inline examples early.
+	const onFuzzerProgress = extensionContext.events.onFuzzerProgress.event(async (processState) => {
+		const runs = await processState.results;
+		extensionContext.providers.functionsTree.updateFunctionStatus(
+			processState.file, processState.functionName, 'running', runs?.length
+		);
+		extensionContext.providers.resultsTree.setResults(processState);
+		handleFuzzerResults(extensionContext, processState);
+	});
+
 	context.subscriptions.push(
 		// Views
 		functionsTreeView,
@@ -88,7 +99,8 @@ export function activate(context: vscode.ExtensionContext) {
 		// Listeners
 		extensionContext.output,
 		fuzzerResultsListener,
-		onResultsReady
+		onResultsReady,
+		onFuzzerProgress
 	);
 }
 

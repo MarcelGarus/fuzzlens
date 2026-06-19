@@ -110,25 +110,121 @@ export const pipeProcessOutToVSCodeOutput = (processState: ProcessState, outputC
     });
 };
 
+/**
+ * Minimum time between throttled `onFuzzerProgress` events while runs stream in,
+ * so a fast fuzzing loop doesn't thrash the UI with a refresh per iteration.
+ */
+const PROGRESS_THROTTLE_MS = 300;
+
+/**
+ * Stream the fuzzer's JSONL stdout into the process state as it arrives.
+ *
+ * The backend prints one `run` line per iteration (flushed immediately) and the
+ * `analysis` lines together at the end. We parse line-by-line, accumulate results,
+ * keep the cache up to date, and fire `onFuzzerProgress` (throttled for runs,
+ * immediately for analyses) so the UI updates live. `onFuzzerResultsReady` fires
+ * once at the end with the final results.
+ */
 export const writeProcessOutputToState = (ctx: FuzzLensContext, processState: ProcessState) => {
     const process = processState.process;
     if (!process) {
         throw new Error('No process found in process state.');
     }
 
-    let stdout = '';
-    // once the process exits, we resolve the promises
+    const runs: RunResult[] = [];
+    const analyses = new Map<string, ResultGroup>();
+    processState.results = Promise.resolve(runs);
+    processState.analyses = analyses;
+
+    // Push the latest accumulated results into the cache and notify listeners.
+    const commit = (final: boolean) => {
+        // Snapshot so consumers that read asynchronously aren't surprised by later mutation.
+        processState.results = Promise.resolve(runs.slice());
+
+        if (processState.file) {
+            getCache().set(processState.file, processState.functionName, {
+                runs: runs.slice(),
+                analyses: new Map(analyses),
+                timestamp: Date.now()
+            });
+        }
+
+        if (final) {
+            ctx.events.onFuzzerResultsReady.fire(processState);
+        } else {
+            ctx.events.onFuzzerProgress.fire(processState);
+        }
+    };
+
+    // Throttle progress events: at most one per PROGRESS_THROTTLE_MS while runs arrive.
+    let progressTimer: NodeJS.Timeout | undefined;
+    let progressPending = false;
+    const scheduleProgress = () => {
+        progressPending = true;
+        if (progressTimer) { return; }
+        progressTimer = setTimeout(() => {
+            progressTimer = undefined;
+            if (progressPending) {
+                progressPending = false;
+                commit(false);
+            }
+        }, PROGRESS_THROTTLE_MS);
+    };
+    const cancelScheduledProgress = () => {
+        if (progressTimer) {
+            clearTimeout(progressTimer);
+            progressTimer = undefined;
+        }
+        progressPending = false;
+    };
+
+    const handleLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) { return; }
+        try {
+            const parsed = JSON.parse(trimmed) as FuzzerOutput;
+            if (parsed.type === 'run') {
+                runs.push(parsed);
+                scheduleProgress();
+            } else if (parsed.type === 'analysis') {
+                analyses.set(parsed.query || 'default', parsed.root);
+                // Analyses (signatures, grouped views, inline examples) are
+                // high-value — surface them immediately rather than waiting.
+                cancelScheduledProgress();
+                commit(false);
+            }
+        } catch (err) {
+            console.error('Error parsing JSONL line:', trimmed, err);
+        }
+    };
+
+    // Parse stdout line-by-line, buffering partial lines across chunks.
+    let lineBuffer = '';
+    let fullStdout = '';
     processState.stdout = new Promise<string>((resolve) => {
-        process.on('exit', () => {
-            resolve(stdout);
-        });
+        process.on('exit', () => resolve(fullStdout));
     });
     process.stdout.setEncoding('utf8');
     process.stdout.on('data', (d: string) => {
-        stdout += d;
+        fullStdout += d;
+        lineBuffer += d;
+        let newlineIndex: number;
+        while ((newlineIndex = lineBuffer.indexOf('\n')) >= 0) {
+            const line = lineBuffer.slice(0, newlineIndex);
+            lineBuffer = lineBuffer.slice(newlineIndex + 1);
+            handleLine(line);
+        }
     });
 
-    createFuzzerResultsOnceExited(ctx, processState);
+    process.on('exit', () => {
+        // Flush any trailing line that wasn't newline-terminated.
+        if (lineBuffer.trim()) {
+            handleLine(lineBuffer);
+            lineBuffer = '';
+        }
+        cancelScheduledProgress();
+        commit(true);
+    });
 
     let stderr = '';
     processState.stderr = new Promise<string>((resolve) => {
@@ -149,38 +245,6 @@ export const writeProcessOutputToState = (ctx: FuzzLensContext, processState: Pr
     process.stderr.on('data', (d: string) => {
         stderr += d;
     });
-};
-
-const createFuzzerResultsOnceExited = async (ctx: FuzzLensContext, processState: ProcessState) => {
-    if (!processState.stdout) {
-        vscode.window.showErrorMessage('No stdout promise found in process state.');
-        return;
-    }
-
-    try {
-        const data = await processState.stdout;
-        const { runs, analyses } = parseFuzzerOutput(data);
-
-        processState.results = Promise.resolve(runs);
-        processState.analyses = analyses;
-
-        if (processState.file) {
-            const cache = getCache();
-            const functionName = processState.functionName;
-            cache.set(processState.file, functionName, {
-                runs,
-                analyses,
-                timestamp: Date.now()
-            });
-        }
-
-        ctx.events.onFuzzerResultsReady.fire(processState);
-    } catch (err) {
-        ctx.output.appendLine(`Error parsing fuzzer output: ${(err as Error).message}`);
-        ctx.output.show(true);
-        vscode.window.showErrorMessage(`Error parsing fuzzer output: ${(err as Error).message}`);
-        return;
-    }
 };
 
 export const removeFromStateOnceExited = (processState: ProcessState, state: FuzzerState) => {

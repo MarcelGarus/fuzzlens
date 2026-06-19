@@ -91,7 +91,7 @@ export class FunctionItem extends vscode.TreeItem {
             case 'outdated':
                 return '[outdated]';
             case 'running':
-                return '[running...]';
+                return info.runCount ? `[running... ${info.runCount} runs]` : '[running...]';
             case 'not-run':
             default:
                 return '[not run]';
