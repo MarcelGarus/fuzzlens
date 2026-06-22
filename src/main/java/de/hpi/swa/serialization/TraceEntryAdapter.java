@@ -16,7 +16,9 @@ public class TraceEntryAdapter implements JsonSerializer<Trace.TraceEntry>, Json
         switch (entry) {
             case Trace.Call call -> {
                 result.addProperty("type", "Call");
-                result.add("arg", context.serialize(call.arg()));
+                // Serialize as Value (not the runtime record type) so the type
+                // tag is emitted and the trace can be deserialized for replay.
+                result.add("arg", context.serialize(call.arg(), Value.class));
             }
             case Trace.QueryMember query -> {
                 result.addProperty("type", "QueryMember");
@@ -27,7 +29,7 @@ public class TraceEntryAdapter implements JsonSerializer<Trace.TraceEntry>, Json
                 result.addProperty("type", "Member");
                 result.add("id", context.serialize(member.id()));
                 result.addProperty("key", member.key());
-                result.add("value", context.serialize(member.value()));
+                result.add("value", context.serialize(member.value(), Value.class));
             }
             case Trace.Return ret -> {
                 result.addProperty("type", "Return");

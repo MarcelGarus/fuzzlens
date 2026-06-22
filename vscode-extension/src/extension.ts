@@ -6,6 +6,7 @@ import stopFuzzer from './commands/stopFuzzer';
 import toggleInlineExamples from './commands/toggleInlineExamples';
 import refresh from './commands/refresh';
 import { cleanup } from './services/fuzzer';
+import { FuzzDaemon } from './services/fuzzDaemon';
 import { createContext, FuzzLensContext } from './types/context';
 import { setupFuzzerResultsListener, handleFuzzerResults, showNextExample, showPreviousExample, pauseRotation, resumeRotation } from './fuzzlens/inlineExamples';
 import { FunctionsTreeProvider, ResultsTreeProvider } from './fuzzlens/treeView';
@@ -107,4 +108,5 @@ export function activate(context: vscode.ExtensionContext) {
 // This method is called when your extension is deactivated
 export function deactivate() {
 	cleanup(extensionContext.state);
+	FuzzDaemon.disposeAll();
 }

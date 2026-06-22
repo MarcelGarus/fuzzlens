@@ -6,12 +6,29 @@ export interface FuzzerState {
     /** Map from "filePath:functionName" to running process state */
     runningProcesses: Map<string, ProcessState>;
     inlineExamples: InlineExamplesState;
+    /** Map from "filePath:functionName" to the return-statement examples currently shown. */
+    returnExamples: Map<string, ShownReturnExample[]>;
 }
 
 export const createState = (): FuzzerState => ({
     runningProcesses: new Map(),
     inlineExamples: createInlineExamplesState(),
+    returnExamples: new Map(),
 });
+
+/** An example pill shown next to a return statement, with the trace needed to replay it. */
+export interface ShownReturnExample {
+    /** 0-based editor line of the return statement. */
+    editorLine: number;
+    /** 1-based source line (matches run coverage). */
+    backendLine: number;
+    /** Rendered "input → output" text. */
+    text: string;
+    /** Output value, for detecting whether a replay still returns the same result. */
+    value?: string;
+    /** Trace of the run, used to replay this exact input against edited code. */
+    trace: Trace;
+}
 
 // === Process State ===
 
@@ -178,6 +195,8 @@ export interface InlineExamplesState {
     examples: Map<string, InlineExampleState>;
     rotationInterval: NodeJS.Timeout | undefined;
     isPaused: boolean;
+    /** Files whose examples are greyed out pending re-fuzzing; rotation skips them. */
+    pendingFiles: Set<string>;
 }
 
 export function createInlineExamplesState(): InlineExamplesState {
@@ -185,5 +204,6 @@ export function createInlineExamplesState(): InlineExamplesState {
         examples: new Map(),
         rotationInterval: undefined,
         isPaused: false,
+        pendingFiles: new Set(),
     };
 }

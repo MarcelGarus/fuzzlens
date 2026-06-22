@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import { FuzzLensContext } from '../types/context';
 import { getCache } from './cache';
 import { getGraalLanguageForFile } from '../config/languages';
+import { getUseDaemon } from '../config/defaults';
+import { FuzzDaemon } from './fuzzDaemon';
 
 export const FUZZLENS_QUERIES = [
     // Hover provider queries
@@ -34,6 +36,11 @@ export interface FuzzLensProcessOptions {
     code?: string;
     /** GraalVM language id (e.g. 'python', 'js'). Derived from `file` if omitted. */
     language?: string;
+    /**
+     * Traces (from prior runs) to replay before random fuzzing. Used to quickly
+     * re-confirm previously-shown examples against edited code.
+     */
+    seedTraces?: unknown[];
 }
 
 const spawnGraalFuzzWithArgs = (extensionPath: string, args: string[]): ChildProcessWithoutNullStreams => {
@@ -65,7 +72,24 @@ export const spawnFuzzerProcess = (extensionPath: string, file: string, function
 };
 
 export const spawnFuzzLensProcess = (options: FuzzLensProcessOptions): ChildProcessWithoutNullStreams => {
-    const { extensionPath, file, functionName, code, language, iterations = 1000, queries = FUZZLENS_QUERIES, toJSON = true } = options;
+    const { extensionPath, file, functionName, code, language, seedTraces, iterations = 1000, queries = FUZZLENS_QUERIES, toJSON = true } = options;
+
+    // Route through the long-lived daemon when enabled: it keeps the GraalVM
+    // engine warm, so each request costs ~100ms instead of a cold ~3s JVM spawn.
+    // The returned handle mimics the slice of ChildProcess the callers use.
+    if (getUseDaemon()) {
+        const lang = language ?? getGraalLanguageForFile(file) ?? 'python';
+        const handle = FuzzDaemon.get(extensionPath).submit({
+            language: lang,
+            code,
+            file,
+            function: functionName,
+            iterations,
+            queries,
+            seedTraces,
+        });
+        return handle as unknown as ChildProcessWithoutNullStreams;
+    }
 
     const args = [
         '--iterations', String(iterations),
@@ -74,6 +98,10 @@ export const spawnFuzzLensProcess = (options: FuzzLensProcessOptions): ChildProc
 
     if (functionName) {
         args.push('--function', functionName);
+    }
+
+    if (seedTraces && seedTraces.length > 0) {
+        args.push('--seed-traces', JSON.stringify(seedTraces));
     }
 
     // When code is supplied, fuzz it directly (reflects unsaved edits) instead
@@ -136,8 +164,10 @@ export const pipeProcessOutToVSCodeOutput = (processState: ProcessState, outputC
 /**
  * Minimum time between throttled `onFuzzerProgress` events while runs stream in,
  * so a fast fuzzing loop doesn't thrash the UI with a refresh per iteration.
+ * Kept short, with a leading-edge first emit, so that even sub-second fuzzing
+ * runs produce a few visible incremental updates rather than one final batch.
  */
-const PROGRESS_THROTTLE_MS = 300;
+const PROGRESS_THROTTLE_MS = 120;
 
 /**
  * Stream the fuzzer's JSONL stdout into the process state as it arrives.
@@ -168,6 +198,16 @@ export const writeProcessOutputToState = (
     processState.results = Promise.resolve(runs);
     processState.analyses = analyses;
 
+    // Timing milestones, so the output channel shows where the wall-clock goes:
+    // start → first result (engine/queue latency) → analysis → finish (total).
+    const label = processState.functionName || 'file';
+    const startedAt = processState.startedAt ?? Date.now();
+    let firstRunLogged = false;
+    let analysisLogged = false;
+    ctx.output.appendLine(`[${label}] started fuzzing`);
+
+    let lastProgressAt = 0;
+
     // Push the latest accumulated results into the cache and notify listeners.
     const commit = (final: boolean) => {
         // A run cancelled mid-flight (e.g. superseded by a fresh edit) must not
@@ -190,23 +230,28 @@ export const writeProcessOutputToState = (
         if (final) {
             ctx.events.onFuzzerResultsReady.fire(processState);
         } else {
+            lastProgressAt = Date.now();
             ctx.events.onFuzzerProgress.fire(processState);
         }
     };
 
-    // Throttle progress events: at most one per PROGRESS_THROTTLE_MS while runs arrive.
+    // Throttle progress events: at most one per PROGRESS_THROTTLE_MS, but emit the
+    // first one immediately (leading edge) so streaming is visible even when the
+    // whole run finishes within one throttle window.
     let progressTimer: NodeJS.Timeout | undefined;
     let progressPending = false;
     const scheduleProgress = () => {
         progressPending = true;
         if (progressTimer) { return; }
+        const sinceLast = Date.now() - lastProgressAt;
+        const delay = sinceLast >= PROGRESS_THROTTLE_MS ? 0 : PROGRESS_THROTTLE_MS - sinceLast;
         progressTimer = setTimeout(() => {
             progressTimer = undefined;
-            if (progressPending) {
+            if (progressPending && !processState.cancelled) {
                 progressPending = false;
                 commit(false);
             }
-        }, PROGRESS_THROTTLE_MS);
+        }, delay);
     };
     const cancelScheduledProgress = () => {
         if (progressTimer) {
@@ -222,9 +267,17 @@ export const writeProcessOutputToState = (
         try {
             const parsed = JSON.parse(trimmed) as FuzzerOutput;
             if (parsed.type === 'run') {
+                if (!firstRunLogged) {
+                    firstRunLogged = true;
+                    ctx.output.appendLine(`[${label}] first result after ${Date.now() - startedAt}ms`);
+                }
                 runs.push(parsed);
                 scheduleProgress();
             } else if (parsed.type === 'analysis') {
+                if (!analysisLogged) {
+                    analysisLogged = true;
+                    ctx.output.appendLine(`[${label}] analysis ready after ${Date.now() - startedAt}ms`);
+                }
                 analyses.set(parsed.query || 'default', parsed.root);
                 // Analyses (signatures, grouped views, inline examples) are
                 // high-value — surface them immediately rather than waiting.
@@ -261,6 +314,12 @@ export const writeProcessOutputToState = (
             lineBuffer = '';
         }
         cancelScheduledProgress();
+        const elapsed = Date.now() - startedAt;
+        if (processState.cancelled) {
+            ctx.output.appendLine(`[${label}] cancelled after ${elapsed}ms (superseded by a newer edit)`);
+        } else {
+            ctx.output.appendLine(`[${label}] finished: ${runs.length} results in ${elapsed}ms`);
+        }
         commit(true);
     });
 

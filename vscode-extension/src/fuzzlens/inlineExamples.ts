@@ -105,12 +105,26 @@ export const handleFuzzerResults = async (ctx: FuzzLensContext, processState: Pr
     logFuzzerResults(ctx.output, runs);
 
     const showInline = getShowInlineExamples();
+    const wasPending = ctx.state.inlineExamples.pendingFiles.has(processState.file);
+
+    // First results after an edit: drop the greyed-out placeholders so the
+    // freshly confirmed examples below replace them cleanly. (Also covers edits
+    // that shifted line numbers, which would otherwise orphan grey pills.)
+    if (showInline && wasPending) {
+        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.fsPath === processState.file);
+        if (editor) { clearDecorations(editor); }
+    }
 
     // Show an example next to each return statement (independent of the
     // function-level example below, which has its own early returns).
     if (showInline) {
         await updateReturnExamples(ctx, processState);
     }
+
+    // Fresh results arrived for this file, so its examples are confirmed again:
+    // re-enable rotation (it was paused while the greyed-out examples were
+    // pending re-fuzzing).
+    ctx.state.inlineExamples.pendingFiles.delete(processState.file);
 
     if (showInline && processState.analyses) {
         const relevantPairs = processState.analyses.get('relevantPairs');
@@ -243,6 +257,10 @@ const rotateAllExamples = (ctx: FuzzLensContext) => {
     const inlineState = ctx.state.inlineExamples;
     const filePath = editor.document.uri.fsPath;
 
+    // Don't rotate (and thereby re-green) examples that are greyed out pending
+    // re-fuzzing after an edit.
+    if (inlineState.pendingFiles.has(filePath)) { return; }
+
     for (const [key, exState] of inlineState.examples.entries()) {
         if (exState.filePath === filePath && exState.examples.length > 1) {
             exState.currentIndex = (exState.currentIndex + 1) % exState.examples.length;
@@ -329,18 +347,9 @@ const resultToDecorationString = (result: RunResult | RunResultInGroup, maxLengt
 };
 
 const logFuzzerResults = (output: vscode.OutputChannel, results: RunResult[]) => {
-    output.appendLine(`Received ${results.length} fuzzing results.`);
-    for (const result of results.slice(0, 10)) { // Log first 10
-        const inputValue = valueToString(result.input, result.universe);
-        if (result.didCrash) {
-            output.appendLine(`  ${inputValue} → Crash: ${result.message}`);
-        } else {
-            output.appendLine(`  ${inputValue} → ${result.value} (${result.typeName})`);
-        }
-    }
-    if (results.length > 10) {
-        output.appendLine(`  ... and ${results.length - 10} more`);
-    }
+    // Logged on each (throttled) streaming update, so keep it to a single line —
+    // the growing count is itself the visible evidence that results stream in.
+    output.appendLine(`Received ${results.length} fuzzing results so far.`);
 };
 
 const valueAndTypeNameToString = (value: string, typeName: string): string => {

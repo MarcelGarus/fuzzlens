@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 import { FuzzLensContext } from '../types/context';
-import { ProcessState, RunResult } from '../types/state';
+import { ProcessState, RunResult, ShownReturnExample, Trace } from '../types/state';
 import { findFunctionByName } from '../services/symbols';
 import { applyDecoration } from '../services/inlineDecorations';
 import { formatValue, formatRunResult } from './formatting';
@@ -76,12 +76,27 @@ export async function updateReturnExamples(ctx: FuzzLensContext, processState: P
         }
     }
 
+    const shown: ShownReturnExample[] = [];
     for (const [backendLine, editorLine] of returnLines) {
         const run = chosen.get(backendLine);
         if (run) {
-            applyDecoration(editor, editorLine, formatRunResult(run));
+            const text = formatRunResult(run);
+            applyDecoration(editor, editorLine, text); // 'confirmed' (green)
+            shown.push({ editorLine, backendLine, text, value: run.value, trace: run.trace });
         }
     }
+
+    // Remember what we're showing so it can be replayed (seeded) after an edit.
+    ctx.state.returnExamples.set(`${processState.file}:${processState.functionName}`, shown);
+}
+
+/**
+ * Traces of the examples currently shown for a function, used to replay those
+ * exact inputs against edited code before random fuzzing.
+ */
+export function collectSeedTraces(ctx: FuzzLensContext, file: string, functionName: string): Trace[] {
+    const shown = ctx.state.returnExamples.get(`${file}:${functionName}`);
+    return shown ? shown.map((example) => example.trace) : [];
 }
 
 function inputLength(run: RunResult): number {

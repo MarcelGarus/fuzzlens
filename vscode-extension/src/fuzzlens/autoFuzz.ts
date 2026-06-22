@@ -9,15 +9,20 @@ import {
     removeFromStateOnceExited,
     writeProcessOutputToState,
 } from '../services/fuzzer';
-import { clearInlineExamplesForFile } from './inlineExamples';
+import { collectSeedTraces } from './returnExamples';
+import { greyOutDecorationsForFile } from '../services/inlineDecorations';
 import { isSupportedFile, getGraalLanguageForFile } from '../config/languages';
 import { getAutoFuzzOnView } from '../config/defaults';
 
 /** How long to wait after the viewport settles before scanning for functions. */
 const DEBOUNCE_MS = 400;
 
-/** How long to wait after the last keystroke before re-fuzzing an edited file. */
-const REFUZZ_DEBOUNCE_MS = 600;
+/**
+ * Delay before re-fuzzing after a *save*. Edits re-fuzz immediately (see
+ * `requestRefuzz`); saves wait briefly so the on-disk file-watcher has
+ * invalidated the cache first, and we end on fresh results.
+ */
+const SAVE_REFUZZ_DELAY_MS = 300;
 
 /**
  * Cap on how many fuzzer processes auto-fuzz keeps in flight at once, so that
@@ -43,6 +48,32 @@ export function registerAutoFuzzOnView(ctx: FuzzLensContext): vscode.Disposable 
     const attempted = new Set<string>();
     let scanTimer: NodeJS.Timeout | undefined;
     const refuzzTimers = new Map<string, NodeJS.Timeout>();
+
+    // Per-file coalescing for edit-triggered re-fuzzing. There is NO debounce:
+    // every keystroke aborts the in-flight run and starts a fresh one against the
+    // live buffer. While one re-fuzz is being set up we only flag that another is
+    // needed, so a burst of keystrokes collapses into a single "cancel current,
+    // restart" cycle per available slot — never a pile of overlapping runs — and
+    // always ends with a run against the latest buffer.
+    const refuzzInFlight = new Set<string>();
+    const refuzzAgain = new Set<string>();
+    const requestRefuzz = (file: string) => {
+        if (refuzzInFlight.has(file)) {
+            refuzzAgain.add(file);
+            return;
+        }
+        refuzzInFlight.add(file);
+        void (async () => {
+            try {
+                do {
+                    refuzzAgain.delete(file);
+                    await reFuzzChangedFile(ctx, file, attempted);
+                } while (refuzzAgain.has(file));
+            } finally {
+                refuzzInFlight.delete(file);
+            }
+        })();
+    };
 
     const scheduleScan = (editor: vscode.TextEditor | undefined) => {
         if (!getAutoFuzzOnView()) {
@@ -79,15 +110,10 @@ export function registerAutoFuzzOnView(ctx: FuzzLensContext): vscode.Disposable 
             return;
         }
 
-        const file = document.uri.fsPath;
-        const existing = refuzzTimers.get(file);
-        if (existing) {
-            clearTimeout(existing);
-        }
-        refuzzTimers.set(file, setTimeout(() => {
-            refuzzTimers.delete(file);
-            void reFuzzChangedFile(ctx, file, attempted);
-        }, REFUZZ_DEBOUNCE_MS));
+        // Re-fuzz immediately: this aborts the in-flight run and starts a fresh
+        // one on the live buffer. reFuzzChangedFile greys out the examples until
+        // the new run re-confirms them.
+        requestRefuzz(document.uri.fsPath);
     });
 
     // Saving doesn't change buffer content (so onDidChangeTextDocument won't
@@ -113,8 +139,8 @@ export function registerAutoFuzzOnView(ctx: FuzzLensContext): vscode.Disposable 
         // Run after the fs watcher has invalidated the cache so we end on fresh results.
         refuzzTimers.set(file, setTimeout(() => {
             refuzzTimers.delete(file);
-            void reFuzzChangedFile(ctx, file, attempted);
-        }, REFUZZ_DEBOUNCE_MS));
+            requestRefuzz(file);
+        }, SAVE_REFUZZ_DELAY_MS));
     });
 
     // Scan whatever is already open when the extension activates.
@@ -134,15 +160,27 @@ export function registerAutoFuzzOnView(ctx: FuzzLensContext): vscode.Disposable 
 }
 
 /**
- * Drop a file's stale results and re-fuzz whatever is currently visible against
- * the edited code.
+ * Re-fuzz an edited file. Rather than throwing the examples away (the behaviour
+ * has likely only changed in a nuance), grey them out and re-confirm them: each
+ * function is re-fuzzed with its previously-shown examples replayed first, so
+ * unchanged examples turn green again quickly before the slower random fuzzing.
  */
 async function reFuzzChangedFile(
     ctx: FuzzLensContext,
     file: string,
     attempted: Set<string>
 ): Promise<void> {
-    // Results for the previous version of the code are no longer valid.
+    const editor = vscode.window.visibleTextEditors.find((e) => e.document.uri.fsPath === file);
+
+    // Keep the examples visible but greyed out until the fuzzer re-confirms them.
+    if (editor) {
+        greyOutDecorationsForFile(editor, file);
+    }
+    ctx.state.inlineExamples.pendingFiles.add(file);
+
+    // Drop cached results so the function actually re-fuzzes. We deliberately
+    // keep the shown examples (their decorations and traces) for greying and for
+    // seeding the replay below.
     getCache().invalidateFile(file);
     for (const key of [...attempted]) {
         if (key.startsWith(file + ':')) {
@@ -159,17 +197,16 @@ async function reFuzzChangedFile(
         }
     }
 
-    // Remove now-stale inline examples until the fresh run repopulates them.
-    clearInlineExamplesForFile(ctx, file);
     ctx.providers.functionsTree.refresh();
 
-    await scanVisibleFunctions(ctx, vscode.window.activeTextEditor, attempted);
+    await scanVisibleFunctions(ctx, editor ?? vscode.window.activeTextEditor, attempted, true);
 }
 
 async function scanVisibleFunctions(
     ctx: FuzzLensContext,
     editor: vscode.TextEditor | undefined,
-    attempted: Set<string>
+    attempted: Set<string>,
+    seedFromExamples: boolean = false
 ): Promise<void> {
     editor = editor ?? vscode.window.activeTextEditor;
     if (!editor) {
@@ -216,7 +253,10 @@ async function scanVisibleFunctions(
         }
 
         attempted.add(key);
-        triggerFuzz(ctx, document, fn.name);
+        // After an edit, replay the previously-shown examples first so they
+        // re-confirm (turn green) before random fuzzing kicks in.
+        const seedTraces = seedFromExamples ? collectSeedTraces(ctx, file, fn.name) : undefined;
+        triggerFuzz(ctx, document, fn.name, seedTraces);
     }
 }
 
@@ -225,7 +265,12 @@ async function scanVisibleFunctions(
  * notification (this fires for whatever scrolls into view or gets edited, so it
  * must stay quiet). Fuzzes the live buffer content so unsaved edits are reflected.
  */
-function triggerFuzz(ctx: FuzzLensContext, document: vscode.TextDocument, functionName: string): void {
+function triggerFuzz(
+    ctx: FuzzLensContext,
+    document: vscode.TextDocument,
+    functionName: string,
+    seedTraces?: unknown[]
+): void {
     const file = document.uri.fsPath;
     const key = `${file}:${functionName}`;
     try {
@@ -237,6 +282,7 @@ function triggerFuzz(ctx: FuzzLensContext, document: vscode.TextDocument, functi
             functionName,
             code: document.getText(),
             language: getGraalLanguageForFile(file),
+            seedTraces,
         });
 
         const processState: ProcessState = {

@@ -1,13 +1,33 @@
 import * as vscode from 'vscode';
 
 // Example "pill" colors.
-const EXAMPLE_FOREGROUND = '#1b5e20'; // dark green text
-const EXAMPLE_BACKGROUND = '#c8e6c9'; // light green background
+const CONFIRMED_FOREGROUND = '#1b5e20'; // dark green text
+const CONFIRMED_BACKGROUND = '#c8e6c9'; // light green background
+// "Pending" pills (e.g. while a function is being re-fuzzed after an edit) are
+// greyed out until the fuzzer confirms the example again.
+const PENDING_FOREGROUND = '#9e9e9e';
+const PENDING_BACKGROUND = '#9e9e9e2b'; // translucent grey
 
-// Track decoration types for cleanup
-const activeDecorations: Map<string, vscode.TextEditorDecorationType> = new Map();
+/** Visual state of an example pill. */
+export type DecorationVariant = 'confirmed' | 'pending';
 
-export const applyDecoration = (editor: vscode.TextEditor, line: number, suggestion: string) => {
+interface ActiveDecoration {
+  type: vscode.TextEditorDecorationType;
+  line: number;
+  /** The full (untruncated) example text, so the pill can be re-rendered (e.g. greyed). */
+  text: string;
+  variant: DecorationVariant;
+}
+
+// Track decorations for cleanup and for re-rendering in a different variant.
+const activeDecorations: Map<string, ActiveDecoration> = new Map();
+
+export const applyDecoration = (
+  editor: vscode.TextEditor,
+  line: number,
+  suggestion: string,
+  variant: DecorationVariant = 'confirmed'
+) => {
   // Validate line number (must be >= 1 and <= document line count)
   if (line < 0 || line > editor.document.lineCount) {
     console.warn(`Invalid line number for decoration: ${line} (document has ${editor.document.lineCount} lines)`);
@@ -18,7 +38,7 @@ export const applyDecoration = (editor: vscode.TextEditor, line: number, suggest
 
   // Clear previous decoration at this line
   if (activeDecorations.has(key)) {
-    activeDecorations.get(key)?.dispose();
+    activeDecorations.get(key)?.type.dispose();
     activeDecorations.delete(key);
   }
 
@@ -30,8 +50,8 @@ export const applyDecoration = (editor: vscode.TextEditor, line: number, suggest
   const decorationType = vscode.window.createTextEditorDecorationType({
     after: {
       contentText: substring,
-      color: EXAMPLE_FOREGROUND,
-      backgroundColor: EXAMPLE_BACKGROUND,
+      color: variant === 'pending' ? PENDING_FOREGROUND : CONFIRMED_FOREGROUND,
+      backgroundColor: variant === 'pending' ? PENDING_BACKGROUND : CONFIRMED_BACKGROUND,
       fontStyle: 'italic',
       // Space between the code and the example pill.
       margin: '0 0 0 2rem',
@@ -50,16 +70,33 @@ export const applyDecoration = (editor: vscode.TextEditor, line: number, suggest
   const decoration = { range: range, hoverMessage: suggestion };
 
   editor.setDecorations(decorationType, [decoration]);
-  activeDecorations.set(key, decorationType);
+  activeDecorations.set(key, { type: decorationType, line, text: suggestion, variant });
+};
+
+/**
+ * Re-render every example pill in a file as "pending" (greyed out), keeping its
+ * text. Used when a function is edited: the examples stay visible but greyed
+ * until the fuzzer re-confirms them.
+ */
+export const greyOutDecorationsForFile = (editor: vscode.TextEditor, filePath: string) => {
+  const toGrey: ActiveDecoration[] = [];
+  for (const [key, dec] of activeDecorations.entries()) {
+    if (key.startsWith(filePath + ':') && dec.variant !== 'pending') {
+      toGrey.push(dec);
+    }
+  }
+  for (const dec of toGrey) {
+    applyDecoration(editor, dec.line, dec.text, 'pending');
+  }
 };
 
 export const clearDecorations = (editor: vscode.TextEditor) => {
   const filePath = editor.document.uri.fsPath;
   const keysToDelete: string[] = [];
 
-  for (const [key, decorationType] of activeDecorations.entries()) {
+  for (const [key, dec] of activeDecorations.entries()) {
     if (key.startsWith(filePath + ':')) {
-      decorationType.dispose();
+      dec.type.dispose();
       keysToDelete.push(key);
     }
   }
@@ -70,8 +107,8 @@ export const clearDecorations = (editor: vscode.TextEditor) => {
 };
 
 export const clearAllDecorations = () => {
-  for (const decorationType of activeDecorations.values()) {
-    decorationType.dispose();
+  for (const dec of activeDecorations.values()) {
+    dec.type.dispose();
   }
   activeDecorations.clear();
 };

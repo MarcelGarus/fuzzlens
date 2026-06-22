@@ -1,77 +1,73 @@
 package de.hpi.swa.cli;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Random;
 
-import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.PolyglotException;
 
 import de.hpi.swa.analysis.Analysis;
-import de.hpi.swa.analysis.Group;
 import de.hpi.swa.cli.logger.ConsoleLogger;
 import de.hpi.swa.cli.logger.JsonLogger;
 import de.hpi.swa.cli.logger.ResultLogger;
-import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.coverage.CoverageInstrument;
-import de.hpi.swa.generator.Pool;
-import de.hpi.swa.generator.Run;
-import de.hpi.swa.generator.Runner;
+import de.hpi.swa.generator.Trace;
+import de.hpi.swa.serialization.GsonConfig;
 
 public class FuzzMain {
 
     public static void main(String[] args) {
-        // Parse CLI options
-        String language = "python";
-        String code = null;
-        String filePath = null;
-        String functionName = null; // Optional function name to fuzz
+        // Parse CLI options into a request.
+        FuzzRequest req = new FuzzRequest();
+        req.queries = new ArrayList<>();
         Boolean colorStdOut = true;
         Boolean tooling = false;
-        List<String> queryNames = new ArrayList<>();
-        int iterations = 1000;
+        String seedTracesJson = null; // Optional JSON array of traces to replay first
 
         for (int i = 0; i < args.length; i++) {
             String a = args[i];
             if (a.equals("--language") || a.equals("-l")) {
                 if (i + 1 < args.length)
-                    language = args[++i];
+                    req.language = args[++i];
             } else if (a.startsWith("--language=")) {
-                language = a.substring("--language=".length());
+                req.language = a.substring("--language=".length());
             } else if (a.equals("--code") || a.equals("-c")) {
                 if (i + 1 < args.length)
-                    code = args[++i];
+                    req.code = args[++i];
             } else if (a.startsWith("--code=")) {
-                code = a.substring("--code=".length());
+                req.code = a.substring("--code=".length());
             } else if (a.equals("--file") || a.equals("-f")) {
                 if (i + 1 < args.length)
-                    filePath = args[++i];
+                    req.filePath = args[++i];
             } else if (a.startsWith("--file=")) {
-                filePath = a.substring("--file=".length());
+                req.filePath = a.substring("--file=".length());
             } else if (a.equals("--function") || a.equals("-fn")) {
                 if (i + 1 < args.length)
-                    functionName = args[++i];
+                    req.functionName = args[++i];
             } else if (a.startsWith("--function=")) {
-                functionName = a.substring("--function=".length());
+                req.functionName = a.substring("--function=".length());
             } else if (a.equals("--no-color")) {
                 colorStdOut = false;
             } else if (a.equals("--tooling")) {
                 tooling = true;
             } else if (a.equals("--query") || a.equals("-q")) {
                 if (i + 1 < args.length) {
-                    queryNames.addAll(Arrays.asList(args[++i].split(",")));
+                    req.queries.addAll(Arrays.asList(args[++i].split(",")));
                 }
             } else if (a.startsWith("--query=")) {
-                queryNames.addAll(Arrays.asList(a.substring("--query=".length()).split(",")));
+                req.queries.addAll(Arrays.asList(a.substring("--query=".length()).split(",")));
             } else if (a.equals("--iterations") || a.equals("-n")) {
                 if (i + 1 < args.length)
-                    iterations = Integer.parseInt(args[++i]);
+                    req.iterations = Integer.parseInt(args[++i]);
             } else if (a.startsWith("--iterations=")) {
-                iterations = Integer.parseInt(a.substring("--iterations=".length()));
+                req.iterations = Integer.parseInt(a.substring("--iterations=".length()));
+            } else if (a.equals("--seed-traces")) {
+                if (i + 1 < args.length)
+                    seedTracesJson = args[++i];
+            } else if (a.startsWith("--seed-traces=")) {
+                seedTracesJson = a.substring("--seed-traces=".length());
             } else if (a.equals("--list-queries")) {
                 System.out.println("Available queries:");
                 for (String name : Analysis.available()) {
@@ -84,137 +80,58 @@ public class FuzzMain {
             }
         }
 
+        // CLI-specific massaging: unescape inline code, parse seed traces, and
+        // fall back to the bundled demo program when nothing was supplied.
+        if (req.code != null) {
+            req.code = req.code.replace("\\n", "\n").replace("\\t", "\t");
+            System.err.println("Using inline " + req.language + " code from CLI");
+        } else if (req.filePath == null) {
+            req.filePath = "examples/program.py";
+            System.err.println("Using default python program: " + req.filePath);
+        }
+        if (seedTracesJson != null && !seedTracesJson.isBlank()) {
+            try {
+                req.seedTraces = GsonConfig.createGson().fromJson(seedTracesJson, Trace[].class);
+            } catch (Exception e) {
+                System.err.println("Failed to parse seed traces: " + e.getMessage());
+            }
+        }
+
         System.err.println("Welcome to the Fuzzer!");
 
         var engine = Engine.newBuilder().option(CoverageInstrument.ID, "true").build();
-        var context = Context.newBuilder().engine(engine).allowAllAccess(true).build();
         var instrument = engine.getInstruments().get(CoverageInstrument.ID).lookup(CoverageInstrument.class);
-
-        // Display available languages
-        System.err.print("Available languages:");
-        for (var lang : context.getEngine().getLanguages().keySet()) {
-            System.err.print(" " + lang);
-        }
-        System.err.println();
-
         if (instrument == null) {
             throw new IllegalStateException(
                     "CoverageInstrument not found. Ensure it's on the classpath and correctly registered.");
         }
 
-        // Build source
-        org.graalvm.polyglot.Source source;
+        // Display available languages (read off the engine; building a probe
+        // context with a different host-access config than FuzzCore's would
+        // break engine sharing).
+        System.err.print("Available languages:");
+        for (var lang : engine.getLanguages().keySet()) {
+            System.err.print(" " + lang);
+        }
+        System.err.println();
+
+        System.err.println("Running " + req.iterations + " iterations.\n");
+
+        ResultLogger logger = tooling ? new JsonLogger() : new ConsoleLogger(colorStdOut);
+
         try {
-            if (code != null) {
-                System.err.println("Using inline " + language + " code from CLI");
-                // Unescape newlines and tabs passed via CLI
-                code = code.replace("\\n", "\n").replace("\\t", "\t");
-                source = org.graalvm.polyglot.Source.newBuilder(language, code, "cli-inline").build();
-            } else if (filePath != null) {
-                var file = new File(filePath);
-                if (filePath.endsWith(".py")) {
-                    language = "python";
-                } else if (filePath.endsWith(".js")) {
-                    language = "js";
-                }
-                System.err.println("Using " + language + " file: " + file.getPath());
-                source = org.graalvm.polyglot.Source.newBuilder(language, file).build();
-            } else {
-                var pythonFile = new File("examples/program.py");
-                System.err.println("Using default python program: " + pythonFile.getPath());
-                source = org.graalvm.polyglot.Source.newBuilder("python", pythonFile).build();
-            }
+            FuzzCore.runFuzz(engine, instrument, req, logger, () -> false);
+        } catch (FuzzException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+        } catch (PolyglotException e) {
+            System.err.println("Error during execution:");
+            printException(e);
+            System.exit(1);
         } catch (IOException e) {
             System.err.println("Could not read file or build source.");
             e.printStackTrace();
             System.exit(1);
-            return;
-        }
-
-        System.err.println("Running " + iterations + " iterations.\n");
-
-        org.graalvm.polyglot.Value evalResult;
-        try {
-            evalResult = context.eval(source);
-        } catch (PolyglotException e) {
-            System.err.println("Error during execution:");
-            FuzzMain.printException(e);
-            System.exit(1);
-            return;
-        }
-
-        // Determine the function to fuzz
-        org.graalvm.polyglot.Value function;
-        if (functionName != null && !functionName.isEmpty()) {
-            var bindings = context.getBindings(language);
-            if (!bindings.hasMember(functionName)) {
-                System.err.println("Function '" + functionName + "' not found in " + language + " bindings.");
-                System.err.println("Available members: " + bindings.getMemberKeys());
-                System.exit(1);
-            }
-            function = bindings.getMember(functionName);
-            if (!function.canExecute()) {
-                System.err.println("'" + functionName + "' is not callable.");
-                System.exit(1);
-            }
-            System.err.println("Fuzzing function: " + functionName);
-        } else {
-            function = evalResult;
-            if (function.isNull() || !function.canExecute()) {
-                System.err.println("Returning because the code didn't evaluate to a function:");
-                System.err.println(function);
-                System.exit(1);
-            }
-        }
-
-        // Output
-        ResultLogger logger;
-        if (tooling) {
-            logger = new JsonLogger();
-        } else {
-            logger = new ConsoleLogger(colorStdOut);
-        }
-
-        // Fuzzing loop
-        var pool = new Pool();
-        var random = new Random();
-        List<Run> allResults = new ArrayList<>();
-
-        for (int i = 0; i < iterations; i++) {
-            var trace = pool.createNewTrace();
-            instrument.coverage = new Coverage();
-            var result = Runner.run(function, trace, random, instrument.coverage);
-            var deduplicatedResult = result.withDeduplicatedTrace();
-
-            // Add the entropy and its results to the pool for future selection
-            pool.add(result.getTrace(), instrument.coverage);
-            allResults.add(deduplicatedResult);
-
-            logger.logRun(deduplicatedResult);
-        }
-
-        if (queryNames.isEmpty()) {
-            System.err.println("No queries specified, skipping analysis phase.");
-            return;
-        }
-
-        List<String> queries = queryNames.stream().filter(Analysis.available()::contains).toList();
-        if (queries.isEmpty()) {
-            System.err.println("Warning: No valid queries found for names: " + queryNames);
-            System.err.println("Available queries: " + Analysis.available());
-            return;
-        }
-
-        if (queries.size() != queryNames.size()) {
-            System.err.println("Note: Some queries were not found. Requested: " + queryNames + ", Found: " + queries);
-        }
-
-        System.err.println("Running " + queries.size() + " queries: " + queries);
-
-        // Analysis
-        for (String name : queries) {
-            Group result = Analysis.run(name, allResults);
-            logger.logAnalysis(name, result);
         }
     }
 

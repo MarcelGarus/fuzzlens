@@ -14,6 +14,7 @@ export const DEFAULT_ROTATION_INTERVAL_MS = 5000;
 // === Fuzzer ===
 export const DEFAULT_ITERATIONS = 1000;
 export const DEFAULT_AUTO_FUZZ_ON_VIEW = true;
+export const DEFAULT_USE_DAEMON = true;
 
 // === Cache ===
 export const DEFAULT_CACHE_SIZE = 50;
@@ -70,6 +71,10 @@ export function getIterations(): number {
 
 export function getAutoFuzzOnView(): boolean {
     return vscode.workspace.getConfiguration('fuzzlens').get('autoFuzzOnView', DEFAULT_AUTO_FUZZ_ON_VIEW);
+}
+
+export function getUseDaemon(): boolean {
+    return vscode.workspace.getConfiguration('fuzzlens').get('useDaemon', DEFAULT_USE_DAEMON);
 }
 
 export function getCacheSize(): number {
