@@ -118,7 +118,7 @@ export const handleFuzzerResults = async (ctx: FuzzLensContext, processState: Pr
     // Show an example next to each return statement (independent of the
     // function-level example below, which has its own early returns).
     if (showInline) {
-        await updateReturnExamples(ctx, processState);
+        await updateReturnExamples(processState);
     }
 
     // Fresh results arrived for this file, so its examples are confirmed again:

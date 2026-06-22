@@ -32,8 +32,11 @@ mvn test
 
 #### Running the main class
 
-After compiling
-Run `graalfuzz.cmd` (Windows) or `./graalfuzz` (Unix).
+After compiling, run the CLI via Maven's exec plugin:
+
+```bash
+mvn exec:java -Dexec.args="--file examples/program.py"
+```
 
 #### Cleanup
 
@@ -43,15 +46,12 @@ mvn clean
 
 ### Running the CLI
 
-After compiling, run `graalfuzz.cmd` (Windows) or `./graalfuzz.sh` (Unix).
+After compiling, run the `de.hpi.swa.cli.FuzzMain` entry point via Maven's exec
+plugin, which resolves the classpath and launches the JVM for you:
 
 #### Usage
 ```bash
-graalfuzz.cmd [options]
-```
-
-```bash
-graalfuzz.sh [options]
+mvn exec:java -Dexec.args="[options]"
 ```
 
 #### Options
@@ -70,20 +70,19 @@ Note that the provided code must always evaluate to a function. In Python, for e
 #### Examples
 ```bash
 # Run with default Python program
-graalfuzz.cmd
+mvn exec:java
 
-# Run specific file
-graalfuzz.cmd --file examples/program.py
+# Run a specific file
+mvn exec:java -Dexec.args="--file examples/program.py"
 
-# Run inline code (This example is difficult because its spanning multiple lines)
-graalfuzz.cmd --code "def f(x): return x.foo
-f"
+# Run inline code (use \n for newlines; the last line must reference the function)
+mvn exec:java -Dexec.args="--code 'def f(x): return x.foo\nf'"
 
 # Output as JSON for tooling integration
-graalfuzz.cmd --tooling > results.jsonl
+mvn exec:java -Dexec.args="--tooling" > results.jsonl
 
 # Run JavaScript code
-graalfuzz.cmd --language js --file examples/program.js
+mvn exec:java -Dexec.args="--language js --file examples/program.js"
 ```
 
 #### Output Modes

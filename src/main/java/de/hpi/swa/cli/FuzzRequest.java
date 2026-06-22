@@ -30,6 +30,7 @@ public class FuzzRequest {
     public String code;
 
     /** Alternative to {@link #code}: a path to read the source from. */
+    @SerializedName("file")
     public String filePath;
 
     /** Name to look up in the language bindings; if null, the eval result is fuzzed. */

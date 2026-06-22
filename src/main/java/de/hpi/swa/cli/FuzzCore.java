@@ -38,10 +38,19 @@ import de.hpi.swa.generator.Trace;
  */
 public final class FuzzCore {
 
+    /** Upper bound on traces returned for seeding a later run (see {@link Pool#bestTraces}). */
+    private static final int MAX_SEED_TRACES = 64;
+
     private FuzzCore() {
     }
 
-    public static void runFuzz(Engine engine, CoverageInstrument instrument, FuzzRequest req,
+    /**
+     * Runs the fuzzer and returns the curated traces worth replaying as seeds on a
+     * later run of the same function (empty if cancelled early). The daemon keeps
+     * these per function and feeds them back in via {@code req.seedTraces}; the CLI
+     * ignores the return value.
+     */
+    public static List<Trace> runFuzz(Engine engine, CoverageInstrument instrument, FuzzRequest req,
             ResultLogger logger, BooleanSupplier cancelled) throws FuzzException, IOException {
 
         String language = req.language != null ? req.language : "python";
@@ -99,7 +108,7 @@ public final class FuzzCore {
             if (req.seedTraces != null) {
                 for (Trace seed : req.seedTraces) {
                     if (cancelled.getAsBoolean()) {
-                        return;
+                        return List.of();
                     }
                     if (seed == null || seed.entries.isEmpty()
                             || !(seed.entries.get(0) instanceof Trace.Call)) {
@@ -117,7 +126,7 @@ public final class FuzzCore {
             // Random fuzzing loop.
             for (int i = 0; i < req.iterations; i++) {
                 if (cancelled.getAsBoolean()) {
-                    return;
+                    return List.of();
                 }
                 var trace = pool.createNewTrace();
                 instrument.coverage = new Coverage();
@@ -132,7 +141,7 @@ public final class FuzzCore {
 
             // Analysis queries.
             if (req.queries == null || req.queries.isEmpty()) {
-                return;
+                return pool.bestTraces(MAX_SEED_TRACES);
             }
             List<String> queries = req.queries.stream().filter(Analysis.available()::contains).toList();
             if (queries.size() != req.queries.size()) {
@@ -141,11 +150,13 @@ public final class FuzzCore {
             }
             for (String name : queries) {
                 if (cancelled.getAsBoolean()) {
-                    return;
+                    return List.of();
                 }
                 Group result = Analysis.run(name, allResults);
                 logger.logAnalysis(name, result);
             }
+
+            return pool.bestTraces(MAX_SEED_TRACES);
         }
     }
 }

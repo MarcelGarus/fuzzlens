@@ -1,8 +1,11 @@
 package de.hpi.swa.generator;
 
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.stream.Collectors;
 
 import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.generator.Trace.Call;
@@ -107,6 +110,19 @@ public class Pool {
 
     public int size() {
         return entries.size();
+    }
+
+    /**
+     * The deduplicated, highest-quality traces this pool discovered — the curated
+     * "interesting inputs" (most coverage first). Worth replaying as seeds on a
+     * later run of the same function to re-confirm prior behaviour quickly.
+     */
+    public List<Trace> bestTraces(int limit) {
+        return entries.values().stream()
+                .sorted(Comparator.comparingDouble((PoolEntry entry) -> entry.quality).reversed())
+                .limit(limit)
+                .map(entry -> entry.trace)
+                .collect(Collectors.toList());
     }
 
     public void printStats() {

@@ -1,12 +1,8 @@
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import * as path from 'path';
 import * as vscode from 'vscode';
-import { ProcessState, FuzzerState, FuzzerOutput, RunResult, ResultGroup } from '../types/state';
-import * as fs from 'fs';
+import { ProcessState, FuzzerState, RunResult, ResultGroup, FuzzRunHandle } from '../types/state';
 import { FuzzLensContext } from '../types/context';
 import { getCache } from './cache';
 import { getGraalLanguageForFile } from '../config/languages';
-import { getUseDaemon } from '../config/defaults';
 import { FuzzDaemon } from './fuzzDaemon';
 
 export const FUZZLENS_QUERIES = [
@@ -21,143 +17,37 @@ export const FUZZLENS_QUERIES = [
     'relevantPairs',
 ];
 
-export interface FuzzLensProcessOptions {
+export interface FuzzRunOptions {
     extensionPath: string;
     file: string;
     functionName?: string;
     iterations?: number;
     queries?: string[];
-    toJSON?: boolean;
     /**
-     * Source code to fuzz directly via `--code` instead of reading `file` from
-     * disk. Lets us fuzz the live (possibly unsaved) editor buffer. The `file`
-     * is still used to derive the language and as the cache/state key.
+     * Source code to fuzz directly instead of reading `file` from disk. Lets us
+     * fuzz the live (possibly unsaved) editor buffer. The `file` is still used to
+     * derive the language and as the cache/state key.
      */
     code?: string;
     /** GraalVM language id (e.g. 'python', 'js'). Derived from `file` if omitted. */
     language?: string;
-    /**
-     * Traces (from prior runs) to replay before random fuzzing. Used to quickly
-     * re-confirm previously-shown examples against edited code.
-     */
-    seedTraces?: unknown[];
 }
 
-const spawnGraalFuzzWithArgs = (extensionPath: string, args: string[]): ChildProcessWithoutNullStreams => {
-    // TODO: Before publishing, move the platform specific native builds into the extension directory. Part of distribution when published.
-    // Choose script based on platform
-    const isWin = process.platform === 'win32';
-    const script = isWin
-        ? path.join(extensionPath, '..', 'graalfuzz.cmd')
-        : path.join(extensionPath, '..', 'graalfuzz.sh');
-
-    console.log(`Spawning GraalFuzz process: ${script} ${args.join(' ')}`);
-    return spawn(script, args, { stdio: 'pipe', shell: isWin, cwd: path.join(extensionPath, '..') });
-};
-
-export const spawnGraalFuzzProcess = (extensionPath: string, file: string, toJSON: boolean = true, args: string[] = []): ChildProcessWithoutNullStreams => {
-    const fullArgs = ['--file', `${file}`, '--no-color', ...args];
-    if (toJSON) {
-        fullArgs.push('--tooling');
-    }
-    return spawnGraalFuzzWithArgs(extensionPath, fullArgs);
-};
-
-export const spawnFuzzerProcess = (extensionPath: string, file: string, functionName?: string, toJSON: boolean = true): ChildProcessWithoutNullStreams => {
-    const args: string[] = [];
-    if (functionName) {
-        args.push('--function', functionName);
-    }
-    return spawnGraalFuzzProcess(extensionPath, file, toJSON, args);
-};
-
-export const spawnFuzzLensProcess = (options: FuzzLensProcessOptions): ChildProcessWithoutNullStreams => {
-    const { extensionPath, file, functionName, code, language, seedTraces, iterations = 1000, queries = FUZZLENS_QUERIES, toJSON = true } = options;
-
-    // Route through the long-lived daemon when enabled: it keeps the GraalVM
-    // engine warm, so each request costs ~100ms instead of a cold ~3s JVM spawn.
-    // The returned handle mimics the slice of ChildProcess the callers use.
-    if (getUseDaemon()) {
-        const lang = language ?? getGraalLanguageForFile(file) ?? 'python';
-        const handle = FuzzDaemon.get(extensionPath).submit({
-            language: lang,
-            code,
-            file,
-            function: functionName,
-            iterations,
-            queries,
-            seedTraces,
-        });
-        return handle as unknown as ChildProcessWithoutNullStreams;
-    }
-
-    const args = [
-        '--iterations', String(iterations),
-        '--query', queries.join(',')
-    ];
-
-    if (functionName) {
-        args.push('--function', functionName);
-    }
-
-    if (seedTraces && seedTraces.length > 0) {
-        args.push('--seed-traces', JSON.stringify(seedTraces));
-    }
-
-    // When code is supplied, fuzz it directly (reflects unsaved edits) instead
-    // of reading the file from disk.
-    if (code !== undefined) {
-        const lang = language ?? getGraalLanguageForFile(file) ?? 'python';
-        const fullArgs = ['--language', lang, '--code', code, '--no-color', ...args];
-        if (toJSON) {
-            fullArgs.push('--tooling');
-        }
-        return spawnGraalFuzzWithArgs(extensionPath, fullArgs);
-    }
-
-    console.log(`Spawning FuzzLens process: ${args.join(' ')}`);
-    return spawnGraalFuzzProcess(extensionPath, file, toJSON, args);
-};
-
-export function parseFuzzerOutput(data: string): {
-    runs: RunResult[];
-    analyses: Map<string, ResultGroup>;
-} {
-    const lines = data.trim().split('\n').filter(line => line.trim());
-    const runs: RunResult[] = [];
-    const analyses = new Map<string, ResultGroup>();
-
-    for (const line of lines) {
-        try {
-            const parsed = JSON.parse(line) as FuzzerOutput;
-            if (parsed.type === 'run') {
-                runs.push(parsed);
-            } else if (parsed.type === 'analysis') {
-                const queryName = parsed.query || 'default';
-                analyses.set(queryName, parsed.root);
-            }
-        } catch (err) {
-            console.error('Error parsing JSONL line:', line, err);
-        }
-    }
-
-    return { runs, analyses };
-}
-
-export const pipeProcessOutToVSCodeOutput = (processState: ProcessState, outputChannel: vscode.OutputChannel) => {
-    const process = processState.process;
-    if (!process) {
-        throw new Error('No process found in process state.');
-    }
-
-    process.stdout.setEncoding('utf8');
-    process.stdout.on('data', (d: string) => outputChannel.append(d));
-
-    process.stderr.setEncoding('utf8');
-    process.stderr.on('data', (d: string) => outputChannel.append('[stderr] ' + d));
-
-    process.on('exit', code => {
-        outputChannel.appendLine('\nFuzzer exited with code ' + code);
+/**
+ * Start one fuzzing run on the warm daemon and return its typed handle. The
+ * daemon keeps the GraalVM engine warm, so each run costs ~100ms instead of a
+ * cold ~3s JVM spawn.
+ */
+export const startFuzzRun = (options: FuzzRunOptions): FuzzRunHandle => {
+    const { extensionPath, file, functionName, code, language, iterations = 1000, queries = FUZZLENS_QUERIES } = options;
+    const lang = language ?? getGraalLanguageForFile(file) ?? 'python';
+    return FuzzDaemon.get(extensionPath).submit({
+        language: lang,
+        code,
+        file,
+        function: functionName,
+        iterations,
+        queries,
     });
 };
 
@@ -170,22 +60,21 @@ export const pipeProcessOutToVSCodeOutput = (processState: ProcessState, outputC
 const PROGRESS_THROTTLE_MS = 120;
 
 /**
- * Stream the fuzzer's JSONL stdout into the process state as it arrives.
+ * Accumulate a run's streamed results into its process state.
  *
- * The backend prints one `run` line per iteration (flushed immediately) and the
- * `analysis` lines together at the end. We parse line-by-line, accumulate results,
- * keep the cache up to date, and fire `onFuzzerProgress` (throttled for runs,
- * immediately for analyses) so the UI updates live. `onFuzzerResultsReady` fires
- * once at the end with the final results.
+ * The daemon streams typed `run` results as they're produced and `analysis`
+ * results at the end. We accumulate them, keep the cache up to date, and fire
+ * `onFuzzerProgress` (throttled for runs, immediately for analyses) so the UI
+ * updates live. `onFuzzerResultsReady` fires once when the run finishes.
  */
-export const writeProcessOutputToState = (
+export const streamRunIntoState = (
     ctx: FuzzLensContext,
     processState: ProcessState,
     options?: { showErrors?: boolean }
 ) => {
-    const process = processState.process;
-    if (!process) {
-        throw new Error('No process found in process state.');
+    const handle = processState.handle;
+    if (!handle) {
+        throw new Error('No fuzz run handle in process state.');
     }
 
     // Auto-triggered runs (on-view, on-edit) pass showErrors=false so transient
@@ -261,96 +150,50 @@ export const writeProcessOutputToState = (
         progressPending = false;
     };
 
-    const handleLine = (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed) { return; }
-        try {
-            const parsed = JSON.parse(trimmed) as FuzzerOutput;
-            if (parsed.type === 'run') {
-                if (!firstRunLogged) {
-                    firstRunLogged = true;
-                    ctx.output.appendLine(`[${label}] first result after ${Date.now() - startedAt}ms`);
-                }
-                runs.push(parsed);
-                scheduleProgress();
-            } else if (parsed.type === 'analysis') {
-                if (!analysisLogged) {
-                    analysisLogged = true;
-                    ctx.output.appendLine(`[${label}] analysis ready after ${Date.now() - startedAt}ms`);
-                }
-                analyses.set(parsed.query || 'default', parsed.root);
-                // Analyses (signatures, grouped views, inline examples) are
-                // high-value — surface them immediately rather than waiting.
-                cancelScheduledProgress();
-                commit(false);
-            }
-        } catch (err) {
-            console.error('Error parsing JSONL line:', trimmed, err);
+    handle.onRun((run) => {
+        if (!firstRunLogged) {
+            firstRunLogged = true;
+            ctx.output.appendLine(`[${label}] first result after ${Date.now() - startedAt}ms`);
         }
-    };
-
-    // Parse stdout line-by-line, buffering partial lines across chunks.
-    let lineBuffer = '';
-    let fullStdout = '';
-    processState.stdout = new Promise<string>((resolve) => {
-        process.on('exit', () => resolve(fullStdout));
-    });
-    process.stdout.setEncoding('utf8');
-    process.stdout.on('data', (d: string) => {
-        fullStdout += d;
-        lineBuffer += d;
-        let newlineIndex: number;
-        while ((newlineIndex = lineBuffer.indexOf('\n')) >= 0) {
-            const line = lineBuffer.slice(0, newlineIndex);
-            lineBuffer = lineBuffer.slice(newlineIndex + 1);
-            handleLine(line);
-        }
+        runs.push(run);
+        scheduleProgress();
     });
 
-    process.on('exit', () => {
-        // Flush any trailing line that wasn't newline-terminated.
-        if (lineBuffer.trim()) {
-            handleLine(lineBuffer);
-            lineBuffer = '';
+    handle.onAnalysis((query, root) => {
+        if (!analysisLogged) {
+            analysisLogged = true;
+            ctx.output.appendLine(`[${label}] analysis ready after ${Date.now() - startedAt}ms`);
         }
+        analyses.set(query, root);
+        // Analyses (signatures, grouped views, inline examples) are high-value —
+        // surface them immediately rather than waiting for the next throttle tick.
+        cancelScheduledProgress();
+        commit(false);
+    });
+
+    handle.onDone((code, errorMessage) => {
         cancelScheduledProgress();
         const elapsed = Date.now() - startedAt;
         if (processState.cancelled) {
             ctx.output.appendLine(`[${label}] cancelled after ${elapsed}ms (superseded by a newer edit)`);
+        } else if (code !== 0) {
+            ctx.output.appendLine(`[${label}] failed after ${elapsed}ms${errorMessage ? ': ' + errorMessage : ''}`);
+            if (showErrors) {
+                ctx.output.show(true); // Surface the output channel on error
+            }
         } else {
             ctx.output.appendLine(`[${label}] finished: ${runs.length} results in ${elapsed}ms`);
         }
         commit(true);
     });
-
-    let stderr = '';
-    processState.stderr = new Promise<string>((resolve) => {
-        process.on('exit', (code) => {
-            // Log stderr to output channel if there was any
-            if (stderr.trim()) {
-                ctx.output.appendLine(`[${processState.functionName || 'file'}] stderr:`);
-                ctx.output.appendLine(stderr);
-            }
-            if (code !== 0 && !processState.cancelled) {
-                ctx.output.appendLine(`Fuzzer exited with code ${code}`);
-                if (showErrors) {
-                    ctx.output.show(true); // Show output channel on error
-                }
-            }
-            resolve(stderr);
-        });
-    });
-    process.stderr.setEncoding('utf8');
-    process.stderr.on('data', (d: string) => {
-        stderr += d;
-    });
 };
 
 export const removeFromStateOnceExited = (processState: ProcessState, state: FuzzerState) => {
-    if (!processState.process) {
-        throw new Error('No process found in process state.');
+    const handle = processState.handle;
+    if (!handle) {
+        throw new Error('No fuzz run handle in process state.');
     }
-    processState.process.on('exit', () => {
+    handle.onDone(() => {
         if (processState.file && processState.functionName) {
             const key = `${processState.file}:${processState.functionName}`;
             // Only clear our own entry — a newer run may have replaced us under
@@ -364,15 +207,16 @@ export const removeFromStateOnceExited = (processState: ProcessState, state: Fuz
 
 export const cleanup = (state: FuzzerState) => {
     for (const processState of state.runningProcesses.values()) {
-        killFuzzerProcess(processState);
+        cancelFuzzRun(processState);
     }
     state.runningProcesses.clear();
 };
 
-const killFuzzerProcess = (processState: ProcessState) => {
+const cancelFuzzRun = (processState: ProcessState) => {
     try {
-        processState.process?.kill?.();
+        processState.cancelled = true;
+        processState.handle?.cancel();
     } catch (e) {
-        vscode.window.showErrorMessage(`Error killing fuzzer process: ${(e as Error).message}`);
+        vscode.window.showErrorMessage(`Error cancelling fuzzer run: ${(e as Error).message}`);
     }
 };

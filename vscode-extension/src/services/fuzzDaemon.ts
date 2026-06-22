@@ -1,6 +1,6 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import { EventEmitter } from 'events';
 import * as path from 'path';
+import { FuzzRunHandle, RunResult, ResultGroup } from '../types/state';
 
 /**
  * Parameters for a single daemon fuzzing request. Mirrors the Java `FuzzRequest`
@@ -16,57 +16,48 @@ export interface DaemonRequest {
     function?: string;
     iterations: number;
     queries: string[];
-    seedTraces?: unknown[];
 }
 
 /**
- * A per-request handle that mimics the small slice of `ChildProcessWithoutNullStreams`
- * the rest of the extension actually uses — `stdout`/`stderr` `'data'` events,
- * the `'exit'` event, `kill()`, and a truthy `pid`. This lets the daemon back a
- * "virtual process" so `writeProcessOutputToState`, `removeFromStateOnceExited`,
- * and the command callers keep working unchanged.
+ * One in-flight request. Holds the typed subscriber lists and dispatches the
+ * daemon's parsed responses straight to them — no `ChildProcess` impersonation,
+ * no re-serializing results back into JSONL for the consumer to re-parse.
  */
-class RequestHandle extends EventEmitter {
-    readonly stdout = makeStream();
-    readonly stderr = makeStream();
-    /** Truthy so callers that gate on `process.pid` before killing still fire. */
-    readonly pid: number;
-    private exited = false;
+class RequestHandle implements FuzzRunHandle {
+    private readonly runCbs: ((run: RunResult) => void)[] = [];
+    private readonly analysisCbs: ((query: string, root: ResultGroup) => void)[] = [];
+    private readonly doneCbs: ((code: number, errorMessage?: string) => void)[] = [];
+    private done = false;
 
-    constructor(id: number, private readonly onKill: () => void) {
-        super();
-        this.pid = id;
+    constructor(private readonly onCancel: () => void) { }
+
+    onRun(cb: (run: RunResult) => void): void { this.runCbs.push(cb); }
+    onAnalysis(cb: (query: string, root: ResultGroup) => void): void { this.analysisCbs.push(cb); }
+    onDone(cb: (code: number, errorMessage?: string) => void): void {
+        // A late subscriber on an already-finished run still gets notified.
+        if (this.done) { cb(this.finalCode, this.finalError); return; }
+        this.doneCbs.push(cb);
     }
 
-    /** Feed a raw JSONL line to the stdout consumer (it re-parses it). */
-    pushStdout(line: string): void {
-        this.stdout.emit('data', line);
-    }
+    cancel(): void { this.onCancel(); }
 
-    pushStderr(text: string): void {
-        this.stderr.emit('data', text);
-    }
+    // --- driven by FuzzDaemon ---
+    private finalCode = 0;
+    private finalError: string | undefined;
 
-    /** Emit the one-shot `'exit'` event, mirroring a real process exit. */
-    finish(code: number): void {
-        if (this.exited) {
-            return;
-        }
-        this.exited = true;
-        this.emit('exit', code, null);
+    emitRun(run: RunResult): void {
+        for (const cb of this.runCbs) { cb(run); }
     }
-
-    kill(): boolean {
-        this.onKill();
-        return true;
+    emitAnalysis(query: string, root: ResultGroup): void {
+        for (const cb of this.analysisCbs) { cb(query, root); }
     }
-}
-
-/** A minimal stdout/stderr stand-in: an emitter with a no-op `setEncoding`. */
-function makeStream(): EventEmitter & { setEncoding: (enc?: string) => void } {
-    const stream = new EventEmitter() as EventEmitter & { setEncoding: (enc?: string) => void };
-    stream.setEncoding = () => { /* daemon already speaks utf8 */ };
-    return stream;
+    finish(code: number, errorMessage?: string): void {
+        if (this.done) { return; }
+        this.done = true;
+        this.finalCode = code;
+        this.finalError = errorMessage;
+        for (const cb of this.doneCbs) { cb(code, errorMessage); }
+    }
 }
 
 /**
@@ -103,10 +94,10 @@ export class FuzzDaemon {
 
     private constructor(private readonly extensionPath: string) { }
 
-    /** Queue a fuzzing request and return its virtual-process handle. */
-    submit(request: DaemonRequest): RequestHandle {
+    /** Queue a fuzzing request and return its typed run handle. */
+    submit(request: DaemonRequest): FuzzRunHandle {
         const id = this.nextId++;
-        const handle = new RequestHandle(id, () => this.send({ id, op: 'cancel' }));
+        const handle = new RequestHandle(() => this.send({ id, op: 'cancel' }));
         this.pending.set(id, handle);
         this.ensureStarted();
         this.send({ id, op: 'fuzz', ...request });
@@ -194,7 +185,7 @@ export class FuzzDaemon {
     }
 
     private routeLine(line: string): void {
-        let msg: { id?: number; type?: string; message?: string; code?: number };
+        let msg: { id?: number; type?: string; query?: string; root?: ResultGroup; message?: string; code?: number };
         try {
             msg = JSON.parse(line);
         } catch (err) {
@@ -211,35 +202,30 @@ export class FuzzDaemon {
             return;
         }
 
-        if (msg.type === 'done') {
-            this.pending.delete(id);
-            handle.finish(msg.code ?? 0);
-        } else if (msg.type === 'error') {
-            this.pending.delete(id);
-            if (msg.message) {
-                handle.pushStderr(msg.message + '\n');
-            }
-            handle.finish(1);
-        } else {
-            // run / analysis: re-feed the raw line; the consumer parses it. The
-            // extra `id` field is ignored by that parser.
-            handle.pushStdout(line + '\n');
+        switch (msg.type) {
+            case 'run':
+                handle.emitRun(msg as unknown as RunResult);
+                break;
+            case 'analysis':
+                handle.emitAnalysis(msg.query || 'default', msg.root as ResultGroup);
+                break;
+            case 'done':
+                this.pending.delete(id);
+                handle.finish(msg.code ?? 0);
+                break;
+            case 'error':
+                this.pending.delete(id);
+                handle.finish(1, msg.message);
+                break;
         }
     }
 
-    /** Mark every in-flight request as exited (non-zero) so callers clean up. */
+    /** Mark every in-flight request as failed so callers clean up. */
     private failAllPending(): void {
         const handles = [...this.pending.values()];
         this.pending.clear();
         for (const handle of handles) {
-            handle.finish(1);
+            handle.finish(1, 'daemon stopped');
         }
     }
 }
-
-/**
- * The daemon's `RequestHandle` implements the subset of `ChildProcessWithoutNullStreams`
- * the extension uses, but isn't the full Node type. Callers cast through this at
- * the boundary so the rest of the code keeps its existing `process` typing.
- */
-export type VirtualProcess = ChildProcessWithoutNullStreams;

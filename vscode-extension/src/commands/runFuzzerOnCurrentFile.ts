@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 
-import { removeFromStateOnceExited, spawnFuzzLensProcess, writeProcessOutputToState } from '../services/fuzzer';
+import { removeFromStateOnceExited, startFuzzRun, streamRunIntoState } from '../services/fuzzer';
 import { ProcessState } from '../types/state';
 import { FuzzLensContext } from '../types/context';
 import { getFunctionAtPosition } from '../services/symbols';
@@ -27,14 +27,14 @@ export default (ctx: FuzzLensContext) => async () => {
         const functionAtCursor = await getFunctionAtPosition(editor.document, cursorPosition);
         const functionName = functionAtCursor?.name || WHOLE_FILE_KEY;
 
-        const process = spawnFuzzLensProcess({
+        const handle = startFuzzRun({
             extensionPath: ctx.vscode.extensionPath,
             file,
             functionName: functionName === WHOLE_FILE_KEY ? undefined : functionName
         });
 
         const processState: ProcessState = {
-            process,
+            handle,
             file,
             functionName,
             startedAt: Date.now()
@@ -49,15 +49,14 @@ export default (ctx: FuzzLensContext) => async () => {
             cancellable: true
         }, async (progress, token) => {
             token.onCancellationRequested(() => {
-                if (process.pid) {
-                    process.kill();
-                    ctx.state.runningProcesses.delete(`${file}:${functionName}`);
-                }
+                processState.cancelled = true;
+                handle.cancel();
+                ctx.state.runningProcesses.delete(`${file}:${functionName}`);
             });
 
             return new Promise<void>((resolve) => {
-                process.on('exit', (code) => {
-                    if (code !== 0) {
+                handle.onDone((code) => {
+                    if (code !== 0 && !processState.cancelled) {
                         vscode.window.showErrorMessage(`FuzzLens: Fuzzer failed (exit code ${code})`);
                     }
                     resolve();
@@ -66,7 +65,7 @@ export default (ctx: FuzzLensContext) => async () => {
         });
 
         removeFromStateOnceExited(processState, ctx.state);
-        writeProcessOutputToState(ctx, processState); // -> onFuzzerResultsReady event
+        streamRunIntoState(ctx, processState); // -> onFuzzerResultsReady event
     } catch (error) {
         vscode.window.showErrorMessage(`Error running fuzzer on current file: ${(error as Error).message}`);
     }

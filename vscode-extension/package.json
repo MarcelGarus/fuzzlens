@@ -157,11 +157,6 @@
           "default": true,
           "description": "Automatically start fuzzing a function as soon as it scrolls into view"
         },
-        "fuzzlens.useDaemon": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run fuzzing through a long-lived background daemon that keeps the GraalVM engine warm. Updates examples in ~100ms instead of spawning a fresh JVM (~3s) per edit."
-        },
         "fuzzlens.inlineExamples.autoRotate": {
           "type": "boolean",
           "default": true,

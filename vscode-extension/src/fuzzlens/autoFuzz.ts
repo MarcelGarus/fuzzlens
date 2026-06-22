@@ -5,11 +5,10 @@ import { ProcessState } from '../types/state';
 import { getFunctionSymbols } from '../services/symbols';
 import { getCache } from '../services/cache';
 import {
-    spawnFuzzLensProcess,
+    startFuzzRun,
     removeFromStateOnceExited,
-    writeProcessOutputToState,
+    streamRunIntoState,
 } from '../services/fuzzer';
-import { collectSeedTraces } from './returnExamples';
 import { greyOutDecorationsForFile } from '../services/inlineDecorations';
 import { isSupportedFile, getGraalLanguageForFile } from '../config/languages';
 import { getAutoFuzzOnView } from '../config/defaults';
@@ -25,9 +24,10 @@ const DEBOUNCE_MS = 400;
 const SAVE_REFUZZ_DELAY_MS = 300;
 
 /**
- * Cap on how many fuzzer processes auto-fuzz keeps in flight at once, so that
- * scrolling through a large file doesn't spawn a flood of processes. Manual runs
- * count towards this limit too (they share `runningProcesses`).
+ * Cap on how many fuzz runs auto-fuzz keeps in flight at once, so scrolling
+ * through a large file doesn't flood the daemon's queue. The daemon itself runs
+ * jobs serially on its warm engine, so this just bounds how many functions show
+ * a "running" indicator at a time. Manual runs share `runningProcesses` too.
  */
 const MAX_CONCURRENT = 3;
 
@@ -192,21 +192,20 @@ async function reFuzzChangedFile(
     for (const [key, processState] of [...ctx.state.runningProcesses]) {
         if (key.startsWith(file + ':')) {
             processState.cancelled = true;
-            processState.process?.kill?.();
+            processState.handle?.cancel();
             ctx.state.runningProcesses.delete(key);
         }
     }
 
     ctx.providers.functionsTree.refresh();
 
-    await scanVisibleFunctions(ctx, editor ?? vscode.window.activeTextEditor, attempted, true);
+    await scanVisibleFunctions(ctx, editor ?? vscode.window.activeTextEditor, attempted);
 }
 
 async function scanVisibleFunctions(
     ctx: FuzzLensContext,
     editor: vscode.TextEditor | undefined,
-    attempted: Set<string>,
-    seedFromExamples: boolean = false
+    attempted: Set<string>
 ): Promise<void> {
     editor = editor ?? vscode.window.activeTextEditor;
     if (!editor) {
@@ -253,10 +252,10 @@ async function scanVisibleFunctions(
         }
 
         attempted.add(key);
-        // After an edit, replay the previously-shown examples first so they
-        // re-confirm (turn green) before random fuzzing kicks in.
-        const seedTraces = seedFromExamples ? collectSeedTraces(ctx, file, fn.name) : undefined;
-        triggerFuzz(ctx, document, fn.name, seedTraces);
+        // Re-confirming previously-shown examples after an edit is handled by the
+        // daemon, which remembers each function's interesting inputs and replays
+        // them first — the extension doesn't track seeds.
+        triggerFuzz(ctx, document, fn.name);
     }
 }
 
@@ -268,32 +267,30 @@ async function scanVisibleFunctions(
 function triggerFuzz(
     ctx: FuzzLensContext,
     document: vscode.TextDocument,
-    functionName: string,
-    seedTraces?: unknown[]
+    functionName: string
 ): void {
     const file = document.uri.fsPath;
     const key = `${file}:${functionName}`;
     try {
         ctx.providers.functionsTree.updateFunctionStatus(file, functionName, 'running');
 
-        const process = spawnFuzzLensProcess({
+        const handle = startFuzzRun({
             extensionPath: ctx.vscode.extensionPath,
             file,
             functionName,
             code: document.getText(),
             language: getGraalLanguageForFile(file),
-            seedTraces,
         });
 
         const processState: ProcessState = {
-            process,
+            handle,
             file,
             functionName,
             startedAt: Date.now(),
         };
         ctx.state.runningProcesses.set(key, processState);
 
-        process.on('exit', (code) => {
+        handle.onDone((code) => {
             if (code !== 0 && !processState.cancelled) {
                 ctx.providers.functionsTree.updateFunctionStatus(file, functionName, 'not-run');
             }
@@ -301,7 +298,7 @@ function triggerFuzz(
 
         removeFromStateOnceExited(processState, ctx.state);
         // Quiet errors: half-typed code will fail to parse, which is expected.
-        writeProcessOutputToState(ctx, processState, { showErrors: false });
+        streamRunIntoState(ctx, processState, { showErrors: false });
     } catch (error) {
         ctx.output.appendLine(`Auto-fuzz error for ${functionName}: ${(error as Error).message}`);
     }

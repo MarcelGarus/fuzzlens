@@ -20,12 +20,16 @@ FuzzLens integrates the GraalFuzz backend into VS Code so you can fuzz functions
 
 ## Prerequisites
 
-This extension runs the repository-local backend scripts:
+This extension runs the repository-local backend daemon launcher:
 
-- Windows: `../graalfuzz.cmd`
-- Unix/macOS: `../graalfuzz.sh`
+- Windows: `../graalfuzz-daemon.cmd`
+- Unix/macOS: `../graalfuzz-daemon.sh`
 
-Because these scripts invoke Maven and run the Java backend, you need:
+The launcher starts a long-lived daemon (`de.hpi.swa.cli.DaemonMain`) that keeps
+the GraalVM engine warm and serves all fuzzing requests over stdin/stdout, so
+results update in ~100 ms instead of paying a cold JVM start per edit.
+
+Because the launcher invokes Maven and runs the Java backend, you need:
 
 - JDK 21
 - Maven
