@@ -2,6 +2,7 @@ package de.hpi.swa.cli;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -41,6 +42,9 @@ public final class FuzzCore {
 
     /** Upper bound on traces returned for seeding a later run (see {@link Pool#bestTraces}). */
     private static final int MAX_SEED_TRACES = 64;
+
+    /** Fixed wall-clock budget for one fuzzed function invocation. */
+    private static final Duration EXECUTION_TIMEOUT = Duration.ofMillis(250);
 
     private FuzzCore() {
     }
@@ -126,9 +130,11 @@ public final class FuzzCore {
                         continue;
                     }
                     instrument.coverage = new Coverage();
-                    var result = Runner.run(function, seed, random, instrument.coverage);
+                    var result = Runner.run(function, seed, random, instrument.coverage, context, EXECUTION_TIMEOUT);
                     var deduplicatedResult = result.withDeduplicatedTrace();
-                    pool.add(result.getTrace(), instrument.coverage);
+                    if (!didTimeout(result)) {
+                        pool.add(result.getTrace(), instrument.coverage);
+                    }
                     allResults.add(deduplicatedResult);
                 }
             }
@@ -140,10 +146,12 @@ public final class FuzzCore {
                 }
                 var trace = pool.createNewTrace();
                 instrument.coverage = new Coverage();
-                var result = Runner.run(function, trace, random, instrument.coverage);
+                var result = Runner.run(function, trace, random, instrument.coverage, context, EXECUTION_TIMEOUT);
                 var deduplicatedResult = result.withDeduplicatedTrace();
 
-                pool.add(result.getTrace(), instrument.coverage);
+                if (!didTimeout(result)) {
+                    pool.add(result.getTrace(), instrument.coverage);
+                }
                 allResults.add(deduplicatedResult);
 
                 if (++sinceSnapshot >= snapshotEvery) {
@@ -155,10 +163,11 @@ public final class FuzzCore {
             // Final snapshot reflecting every result. Here — and only here, since it
             // re-runs the function many times — displayed examples are minimized to
             // smaller inputs that still represent the same curated behaviour.
-            Minimizer minimizer = new Minimizer(function, instrument);
+            Minimizer minimizer = new Minimizer(function, instrument, context, EXECUTION_TIMEOUT);
             ReturnExamples.ExampleMinimizer returnMinimizer = (run, line) -> minimizer.minimize(run,
                     candidate -> !candidate.didCrash() && ReturnExamples.coveredUserLines(candidate).contains(line));
-            Analysis.SampleMinimizer sampleMinimizer = minimizer::minimize;
+            Analysis.SampleMinimizer sampleMinimizer = (run, invariant) -> didTimeout(run) ? run
+                    : minimizer.minimize(run, invariant);
             emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted, returnMinimizer,
                     sampleMinimizer);
 
@@ -177,5 +186,11 @@ public final class FuzzCore {
         for (String name : queries) {
             logger.logAnalysis(name, Analysis.run(name, allResults, sampleMinimizer));
         }
+    }
+
+    private static boolean didTimeout(Run run) {
+        return run.getOutput() instanceof Runner.FunctionResult.Crash crash
+                && crash.message() != null
+                && crash.message().startsWith("TimeoutError:");
     }
 }

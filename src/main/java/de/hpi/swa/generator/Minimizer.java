@@ -1,11 +1,14 @@
 package de.hpi.swa.generator;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
 import java.util.function.Predicate;
+
+import org.graalvm.polyglot.Context;
 
 import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.coverage.CoverageInstrument;
@@ -42,6 +45,8 @@ public final class Minimizer {
 
     private final org.graalvm.polyglot.Value function;
     private final CoverageInstrument instrument;
+    private final Context context;
+    private final Duration timeout;
 
     private int evaluations;
 
@@ -49,8 +54,15 @@ public final class Minimizer {
     }
 
     public Minimizer(org.graalvm.polyglot.Value function, CoverageInstrument instrument) {
+        this(function, instrument, null, null);
+    }
+
+    public Minimizer(org.graalvm.polyglot.Value function, CoverageInstrument instrument, Context context,
+            Duration timeout) {
         this.function = function;
         this.instrument = instrument;
+        this.context = context;
+        this.timeout = timeout;
     }
 
     /**
@@ -248,7 +260,7 @@ public final class Minimizer {
         try {
             instrument.coverage = new Coverage();
             // A fixed seed keeps any incidental member generation reproducible.
-            return Runner.run(function, inputTrace, new Random(0), instrument.coverage);
+            return Runner.run(function, inputTrace, new Random(0), instrument.coverage, context, timeout);
         } catch (RuntimeException e) {
             return null;
         }
