@@ -34,7 +34,21 @@ public final class ReturnExamples {
     private ReturnExamples() {
     }
 
+    /**
+     * Hook for shrinking the example chosen for a given return line before it is
+     * shown. Given the selected run and its 1-based source line, it returns a
+     * minimized run reaching the same line (see {@code de.hpi.swa.generator.Minimizer}).
+     */
+    @FunctionalInterface
+    public interface ExampleMinimizer {
+        Run minimize(Run run, int line);
+    }
+
     public static Group curate(String source, List<Run> runs) {
+        return curate(source, runs, null);
+    }
+
+    public static Group curate(String source, List<Run> runs, ExampleMinimizer minimizer) {
         // 1-based source lines that are `return` statements.
         Set<Integer> returnLines = new HashSet<>();
         String[] lines = source.split("\n", -1);
@@ -65,15 +79,23 @@ public final class ReturnExamples {
         }
 
         List<Group> children = best.entrySet().stream().map(entry -> {
+            int line = entry.getKey();
+            Run chosen = entry.getValue();
+            if (minimizer != null) {
+                Run reduced = minimizer.minimize(chosen, line);
+                if (reduced != null) {
+                    chosen = reduced;
+                }
+            }
             Map<String, Object> aggregations = new LinkedHashMap<>();
-            aggregations.put("Line", entry.getKey());
-            return Group.leaf(String.valueOf(entry.getKey()), aggregations, List.of(entry.getValue()));
+            aggregations.put("Line", line);
+            return Group.leaf(String.valueOf(line), aggregations, List.of(chosen));
         }).toList();
         return Group.root(children);
     }
 
     /** The (1-based) user-code lines a run executed — internal/library sources excluded. */
-    private static Set<Integer> coveredUserLines(Run run) {
+    public static Set<Integer> coveredUserLines(Run run) {
         Set<Integer> lines = new HashSet<>();
         if (run.getCoverage() == null) {
             return lines;

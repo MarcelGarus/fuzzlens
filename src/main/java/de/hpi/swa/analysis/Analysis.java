@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -30,6 +31,15 @@ public final class Analysis {
     }
 
     /**
+     * Optional final-pass hook that shrinks displayed example runs while preserving
+     * the analysis-specific fact the example represents.
+     */
+    @FunctionalInterface
+    public interface SampleMinimizer {
+        Run minimize(Run run, java.util.function.Predicate<Run> invariant);
+    }
+
+    /**
      * Errors that indicate the input itself was invalid (wrong shape) rather than
      * a genuinely interesting behaviour. Excluded when looking for "valid" runs.
      */
@@ -42,13 +52,17 @@ public final class Analysis {
     }
 
     public static Group run(String name, List<Run> rows) {
+        return run(name, rows, null);
+    }
+
+    public static Group run(String name, List<Run> rows, SampleMinimizer minimizer) {
         return switch (name) {
             case "observedSignature" -> observedSignature(rows);
             case "inputShapeOutputTypeTable" -> inputShapeOutputTypeTable(rows);
-            case "exceptionExamples" -> exceptionExamples(rows);
-            case "validExamples" -> validExamples(rows);
-            case "treeList" -> treeList(rows);
-            case "relevantPairs" -> relevantPairs(rows);
+            case "exceptionExamples" -> exceptionExamples(rows, minimizer);
+            case "validExamples" -> validExamples(rows, minimizer);
+            case "treeList" -> treeList(rows, minimizer);
+            case "relevantPairs" -> relevantPairs(rows, minimizer);
             default -> null;
         };
     }
@@ -104,6 +118,20 @@ public final class Analysis {
         return rows.stream()
                 .sorted(Comparator.comparingInt(r -> inputValue(r).length()))
                 .limit(n)
+                .toList();
+    }
+
+    static List<Run> examples(Collection<Run> rows, int n, SampleMinimizer minimizer,
+            java.util.function.Predicate<Run> invariant) {
+        List<Run> picked = examples(rows, n);
+        if (minimizer == null) {
+            return picked;
+        }
+        return picked.stream()
+                .map(run -> {
+                    Run reduced = minimizer.minimize(run, invariant);
+                    return reduced != null ? reduced : run;
+                })
                 .toList();
     }
 
@@ -232,7 +260,7 @@ public final class Analysis {
     }
 
     /** One minimal example per (exception type, input shape), most frequent first. */
-    static Group exceptionExamples(List<Run> rows) {
+    static Group exceptionExamples(List<Run> rows, SampleMinimizer minimizer) {
         record Key(String exception, Shape shape) {
         }
 
@@ -245,7 +273,11 @@ public final class Analysis {
                     aggregations.put("Count", e.getValue().size());
                     aggregations.put("Exception", e.getKey().exception());
                     String label = e.getKey().exception() + " (" + e.getKey().shape() + ")";
-                    return Group.leaf(label, aggregations, examples(e.getValue(), 1));
+                    var key = e.getKey();
+                    return Group.leaf(label, aggregations, examples(e.getValue(), 1, minimizer,
+                            r -> isInterestingCrash(r)
+                                    && key.exception().equals(exceptionType(r))
+                                    && key.shape().equals(inputShape(r))));
                 })
                 .sorted(BY_COUNT_DESC)
                 .toList();
@@ -254,7 +286,7 @@ public final class Analysis {
     }
 
     /** One example per (input type, covered path) among non-crashing runs. */
-    static Group validExamples(List<Run> rows) {
+    static Group validExamples(List<Run> rows, SampleMinimizer minimizer) {
         record Key(String type, Coverage path) {
         }
 
@@ -262,14 +294,24 @@ public final class Analysis {
                 .filter(Run::isValid)
                 .collect(groupingBy(r -> new Key(inputKind(r), r.getCoverage()), LinkedHashMap::new, toList()))
                 .values().stream()
-                .map(group -> examples(group, 1).get(0))
+                .map(group -> {
+                    Run chosen = examples(group, 1).get(0);
+                    if (minimizer == null) {
+                        return chosen;
+                    }
+                    Key key = new Key(inputKind(chosen), chosen.getCoverage());
+                    Run reduced = minimizer.minimize(chosen,
+                            r -> r.isValid() && key.type().equals(inputKind(r))
+                                    && Objects.equals(key.path(), r.getCoverage()));
+                    return reduced != null ? reduced : chosen;
+                })
                 .toList();
 
         return Group.rootSamples(examples(picked, 20));
     }
 
     /** Input shape → output type, nested, with counts and examples. */
-    static Group treeList(List<Run> rows) {
+    static Group treeList(List<Run> rows, SampleMinimizer minimizer) {
         var children = dedupe(rows).stream()
                 .filter(Analysis::isValidOrInteresting)
                 .collect(groupingBy(r -> inputShape(r).toString(), LinkedHashMap::new, toList()))
@@ -282,7 +324,12 @@ public final class Analysis {
                                 var aggregations = new LinkedHashMap<String, Object>();
                                 aggregations.put("Count", o.getValue().size());
                                 aggregations.put("CrashCount", crashes(o.getValue()));
-                                return Group.leaf(o.getKey(), aggregations, examples(o.getValue(), 10));
+                                String shape = e.getKey();
+                                String output = o.getKey();
+                                return Group.leaf(output, aggregations, examples(o.getValue(), 10, minimizer,
+                                        r -> isValidOrInteresting(r)
+                                                && shape.equals(inputShape(r).toString())
+                                                && output.equals(outputType(r))));
                             })
                             .sorted(BY_COUNT_DESC)
                             .toList();
@@ -298,7 +345,7 @@ public final class Analysis {
     }
 
     /** Input shape → output type pairs with a few examples each, for inline display. */
-    static Group relevantPairs(List<Run> rows) {
+    static Group relevantPairs(List<Run> rows, SampleMinimizer minimizer) {
         var children = dedupe(rows).stream()
                 .filter(Analysis::isValidOrInteresting)
                 .collect(groupingBy(r -> inputShape(r).toString() + " → " + outputType(r),
@@ -307,7 +354,10 @@ public final class Analysis {
                 .map(e -> {
                     var aggregations = new LinkedHashMap<String, Object>();
                     aggregations.put("Count", e.getValue().size());
-                    return Group.leaf(e.getKey(), aggregations, examples(e.getValue(), 3));
+                    String key = e.getKey();
+                    return Group.leaf(key, aggregations, examples(e.getValue(), 3, minimizer,
+                            r -> isValidOrInteresting(r)
+                                    && key.equals(inputShape(r).toString() + " → " + outputType(r))));
                 })
                 .sorted(BY_COUNT_DESC)
                 .toList();

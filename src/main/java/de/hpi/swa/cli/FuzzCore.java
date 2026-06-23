@@ -18,6 +18,7 @@ import de.hpi.swa.analysis.ReturnExamples;
 import de.hpi.swa.cli.logger.ResultLogger;
 import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.coverage.CoverageInstrument;
+import de.hpi.swa.generator.Minimizer;
 import de.hpi.swa.generator.Pool;
 import de.hpi.swa.generator.Run;
 import de.hpi.swa.generator.Runner;
@@ -147,12 +148,19 @@ public final class FuzzCore {
 
                 if (++sinceSnapshot >= snapshotEvery) {
                     sinceSnapshot = 0;
-                    emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted);
+                    emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted, null, null);
                 }
             }
 
-            // Final snapshot reflecting every result.
-            emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted);
+            // Final snapshot reflecting every result. Here — and only here, since it
+            // re-runs the function many times — displayed examples are minimized to
+            // smaller inputs that still represent the same curated behaviour.
+            Minimizer minimizer = new Minimizer(function, instrument);
+            ReturnExamples.ExampleMinimizer returnMinimizer = (run, line) -> minimizer.minimize(run,
+                    candidate -> !candidate.didCrash() && ReturnExamples.coveredUserLines(candidate).contains(line));
+            Analysis.SampleMinimizer sampleMinimizer = minimizer::minimize;
+            emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted, returnMinimizer,
+                    sampleMinimizer);
 
             return pool.bestTraces(MAX_SEED_TRACES);
         }
@@ -160,13 +168,14 @@ public final class FuzzCore {
 
     /** Emit one curated snapshot: progress count, the return-line examples, then each analysis. */
     private static void emitSnapshot(ResultLogger logger, String sourceText, List<Run> allResults,
-            List<String> queries, boolean returnExamplesWanted) {
+            List<String> queries, boolean returnExamplesWanted, ReturnExamples.ExampleMinimizer returnMinimizer,
+            Analysis.SampleMinimizer sampleMinimizer) {
         logger.logProgress(allResults.size());
         if (returnExamplesWanted) {
-            logger.logAnalysis(ReturnExamples.QUERY, ReturnExamples.curate(sourceText, allResults));
+            logger.logAnalysis(ReturnExamples.QUERY, ReturnExamples.curate(sourceText, allResults, returnMinimizer));
         }
         for (String name : queries) {
-            logger.logAnalysis(name, Analysis.run(name, allResults));
+            logger.logAnalysis(name, Analysis.run(name, allResults, sampleMinimizer));
         }
     }
 }
