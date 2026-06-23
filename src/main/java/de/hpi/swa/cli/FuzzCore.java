@@ -14,6 +14,7 @@ import org.graalvm.polyglot.Value;
 
 import de.hpi.swa.analysis.Analysis;
 import de.hpi.swa.analysis.Group;
+import de.hpi.swa.analysis.ReturnExamples;
 import de.hpi.swa.cli.logger.ResultLogger;
 import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.coverage.CoverageInstrument;
@@ -23,8 +24,7 @@ import de.hpi.swa.generator.Runner;
 import de.hpi.swa.generator.Trace;
 
 /**
- * The fuzzing core, factored out of {@link FuzzMain} so it can be driven both by
- * a one-shot CLI run and by the long-lived {@link DaemonMain}.
+ * The fuzzing core, driven by the long-lived {@link DaemonMain}.
  *
  * <p>Each call creates a <em>fresh</em> {@link Context} from the supplied
  * {@link Engine}. The context must be fresh because every edit redefines the
@@ -47,8 +47,7 @@ public final class FuzzCore {
     /**
      * Runs the fuzzer and returns the curated traces worth replaying as seeds on a
      * later run of the same function (empty if cancelled early). The daemon keeps
-     * these per function and feeds them back in via {@code req.seedTraces}; the CLI
-     * ignores the return value.
+     * these per function and feeds them back in via {@code req.seedTraces}.
      */
     public static List<Trace> runFuzz(Engine engine, CoverageInstrument instrument, FuzzRequest req,
             ResultLogger logger, BooleanSupplier cancelled) throws FuzzException, IOException {
@@ -71,11 +70,22 @@ public final class FuzzCore {
         } else {
             throw new FuzzException("No code or file path provided.");
         }
+        String sourceText = source.getCharacters().toString();
+
+        // Which queries to run. `returnExamples` is a source-aware curation handled
+        // here rather than as a pure Analysis query, so it's split out.
+        boolean returnExamplesWanted = req.queries != null && req.queries.contains(ReturnExamples.QUERY);
+        List<String> queries = req.queries == null ? List.of()
+                : req.queries.stream().filter(Analysis.available()::contains).toList();
+
+        // Emit ~10 curated snapshots over the run, regardless of iteration count.
+        int snapshotEvery = Math.max(50, req.iterations / 10);
+        int sinceSnapshot = 0;
 
         // Fresh context per request, off the shared (warm) engine.
         try (Context context = Context.newBuilder().engine(engine).allowAllAccess(true).build()) {
             // A syntax/eval error surfaces as a PolyglotException; let it propagate
-            // so callers can format it (CLI) or report it (daemon).
+            // so the daemon can report it as an error.
             Value evalResult = context.eval(source);
 
             // Determine the function to fuzz.
@@ -102,9 +112,9 @@ public final class FuzzCore {
             Random random = new Random();
             List<Run> allResults = new ArrayList<>();
 
-            // Replay seed traces first. The tooling uses this to re-confirm the
-            // examples it was already showing against freshly-edited code (a fast,
-            // deterministic pass) before the slower random fuzzing below.
+            // Replay seed traces first to re-confirm the examples already shown
+            // against freshly-edited code (a fast, deterministic pass) before the
+            // slower random fuzzing below.
             if (req.seedTraces != null) {
                 for (Trace seed : req.seedTraces) {
                     if (cancelled.getAsBoolean()) {
@@ -119,7 +129,6 @@ public final class FuzzCore {
                     var deduplicatedResult = result.withDeduplicatedTrace();
                     pool.add(result.getTrace(), instrument.coverage);
                     allResults.add(deduplicatedResult);
-                    logger.logRun(deduplicatedResult);
                 }
             }
 
@@ -136,27 +145,28 @@ public final class FuzzCore {
                 pool.add(result.getTrace(), instrument.coverage);
                 allResults.add(deduplicatedResult);
 
-                logger.logRun(deduplicatedResult);
+                if (++sinceSnapshot >= snapshotEvery) {
+                    sinceSnapshot = 0;
+                    emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted);
+                }
             }
 
-            // Analysis queries.
-            if (req.queries == null || req.queries.isEmpty()) {
-                return pool.bestTraces(MAX_SEED_TRACES);
-            }
-            List<String> queries = req.queries.stream().filter(Analysis.available()::contains).toList();
-            if (queries.size() != req.queries.size()) {
-                System.err.println("Note: some queries were not found. Requested: " + req.queries
-                        + ", running: " + queries);
-            }
-            for (String name : queries) {
-                if (cancelled.getAsBoolean()) {
-                    return List.of();
-                }
-                Group result = Analysis.run(name, allResults);
-                logger.logAnalysis(name, result);
-            }
+            // Final snapshot reflecting every result.
+            emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted);
 
             return pool.bestTraces(MAX_SEED_TRACES);
+        }
+    }
+
+    /** Emit one curated snapshot: progress count, the return-line examples, then each analysis. */
+    private static void emitSnapshot(ResultLogger logger, String sourceText, List<Run> allResults,
+            List<String> queries, boolean returnExamplesWanted) {
+        logger.logProgress(allResults.size());
+        if (returnExamplesWanted) {
+            logger.logAnalysis(ReturnExamples.QUERY, ReturnExamples.curate(sourceText, allResults));
+        }
+        for (String name : queries) {
+            logger.logAnalysis(name, Analysis.run(name, allResults));
         }
     }
 }

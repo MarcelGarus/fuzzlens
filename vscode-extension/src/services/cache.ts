@@ -86,7 +86,7 @@ export class FuzzLensCache {
                         name: info.functionName,
                         filePath: info.filePath,
                         status: 'has-results',
-                        runCount: cached.runs.length
+                        runCount: cached.runCount ?? cached.runs?.length ?? 0
                     });
                 }
             }

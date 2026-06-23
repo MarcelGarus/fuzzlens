@@ -1,6 +1,6 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as path from 'path';
-import { FuzzRunHandle, RunResult, ResultGroup } from '../types/state';
+import { FuzzRunHandle, ResultGroup } from '../types/state';
 
 /**
  * Parameters for a single daemon fuzzing request. Mirrors the Java `FuzzRequest`
@@ -24,14 +24,14 @@ export interface DaemonRequest {
  * no re-serializing results back into JSONL for the consumer to re-parse.
  */
 class RequestHandle implements FuzzRunHandle {
-    private readonly runCbs: ((run: RunResult) => void)[] = [];
+    private readonly progressCbs: ((count: number) => void)[] = [];
     private readonly analysisCbs: ((query: string, root: ResultGroup) => void)[] = [];
     private readonly doneCbs: ((code: number, errorMessage?: string) => void)[] = [];
     private done = false;
 
     constructor(private readonly onCancel: () => void) { }
 
-    onRun(cb: (run: RunResult) => void): void { this.runCbs.push(cb); }
+    onProgress(cb: (count: number) => void): void { this.progressCbs.push(cb); }
     onAnalysis(cb: (query: string, root: ResultGroup) => void): void { this.analysisCbs.push(cb); }
     onDone(cb: (code: number, errorMessage?: string) => void): void {
         // A late subscriber on an already-finished run still gets notified.
@@ -45,8 +45,8 @@ class RequestHandle implements FuzzRunHandle {
     private finalCode = 0;
     private finalError: string | undefined;
 
-    emitRun(run: RunResult): void {
-        for (const cb of this.runCbs) { cb(run); }
+    emitProgress(count: number): void {
+        for (const cb of this.progressCbs) { cb(count); }
     }
     emitAnalysis(query: string, root: ResultGroup): void {
         for (const cb of this.analysisCbs) { cb(query, root); }
@@ -185,7 +185,7 @@ export class FuzzDaemon {
     }
 
     private routeLine(line: string): void {
-        let msg: { id?: number; type?: string; query?: string; root?: ResultGroup; message?: string; code?: number };
+        let msg: { id?: number; type?: string; query?: string; root?: ResultGroup; message?: string; code?: number; count?: number };
         try {
             msg = JSON.parse(line);
         } catch (err) {
@@ -203,8 +203,8 @@ export class FuzzDaemon {
         }
 
         switch (msg.type) {
-            case 'run':
-                handle.emitRun(msg as unknown as RunResult);
+            case 'progress':
+                handle.emitProgress(msg.count ?? 0);
                 break;
             case 'analysis':
                 handle.emitAnalysis(msg.query || 'default', msg.root as ResultGroup);

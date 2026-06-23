@@ -19,9 +19,9 @@ export const createState = (): FuzzerState => ({
  * Each `on*` may be called more than once to register multiple subscribers.
  */
 export interface FuzzRunHandle {
-    /** Fired for each streamed run result, in order. */
-    onRun(cb: (run: RunResult) => void): void;
-    /** Fired for each analysis query result. */
+    /** Fired with the running count of results produced so far. */
+    onProgress(cb: (count: number) => void): void;
+    /** Fired for each curated analysis snapshot (improving over the run). */
     onAnalysis(cb: (query: string, root: ResultGroup) => void): void;
     /** Fired exactly once when the run ends: code 0 on success, non-zero on failure. */
     onDone(cb: (code: number, errorMessage?: string) => void): void;
@@ -35,7 +35,9 @@ export interface ProcessState {
     functionName: string;
     handle?: FuzzRunHandle;
     startedAt: number;
-    results?: Promise<RunResult[]>;
+    /** Number of runs the daemon has produced so far (from progress snapshots). */
+    runCount?: number;
+    /** Curated behavior snapshots, keyed by query name (incl. `returnExamples`). */
     analyses?: Map<string, ResultGroup>;
     /** Set when a run is superseded (e.g. by a newer edit) so it stops writing results. */
     cancelled?: boolean;
@@ -165,9 +167,12 @@ export type Value =
 // === Cache Types ===
 
 export interface CachedResults {
-    runs: RunResult[];
+    /** Number of runs the snapshot was computed from. */
+    runCount?: number;
     analyses: Map<string, ResultGroup>;
     timestamp: number;
+    /** @deprecated Raw runs are no longer streamed to the client; kept for back-compat. */
+    runs?: RunResult[];
 }
 
 export interface FunctionInfo {

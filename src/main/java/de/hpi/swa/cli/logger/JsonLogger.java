@@ -2,7 +2,6 @@ package de.hpi.swa.cli.logger;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 
 import de.hpi.swa.analysis.Group;
 import de.hpi.swa.generator.Run;
@@ -19,31 +18,26 @@ public class JsonLogger implements ResultLogger {
     private final PrintStream out;
 
     /**
-     * Optional request id. When set, every emitted line carries an {@code "id"}
-     * property so a daemon client can demultiplex interleaved responses; when
-     * null (the CLI case) lines are untagged, preserving the original format.
+     * Request id. Every emitted line carries it as an {@code "id"} property so the
+     * daemon client can demultiplex interleaved responses.
      */
     private final Long id;
 
-    /** CLI constructor: untagged lines to {@code System.out}. */
-    public JsonLogger() {
-        this(System.out, null);
-    }
-
-    /** Daemon constructor: lines tagged with {@code id}, flushed eagerly so they stream. */
+    /** Lines tagged with {@code id}, flushed eagerly so they stream. */
     public JsonLogger(PrintStream out, Long id) {
         this.out = out;
         this.id = id;
     }
 
     @Override
-    public void logRun(Run result) {
-        var jsonElement = gson.toJsonTree(result);
-        if (jsonElement.isJsonObject()) {
-            jsonElement.getAsJsonObject().addProperty("type", "run");
-            tag(jsonElement.getAsJsonObject());
+    public void logProgress(int count) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        if (id != null) {
+            output.put("id", id);
         }
-        emit(gson.toJson(jsonElement));
+        output.put("type", "progress");
+        output.put("count", count);
+        emit(gson.toJson(output));
     }
 
     @Override
@@ -58,16 +52,10 @@ public class JsonLogger implements ResultLogger {
         emit(gson.toJson(output));
     }
 
-    private void tag(JsonObject obj) {
-        if (id != null) {
-            obj.addProperty("id", id);
-        }
-    }
-
     private void emit(String line) {
         out.println(line);
-        // Flush per line so the client sees runs/analyses as they stream rather
-        // than buffered until the request completes.
+        // Flush per line so the client sees snapshots as they stream rather than
+        // buffered until the request completes.
         out.flush();
     }
 

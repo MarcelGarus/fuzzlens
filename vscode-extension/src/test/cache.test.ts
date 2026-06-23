@@ -39,8 +39,8 @@ suite('FuzzLens Cache Test Suite', () => {
         
         const retrieved = cache.get('/path/to/file.py', 'myFunction');
         assert.ok(retrieved);
-        assert.strictEqual(retrieved.runs.length, 1);
-        assert.strictEqual(retrieved.runs[0].value, 'result1');
+        assert.strictEqual(retrieved.runs?.length, 1);
+        assert.strictEqual(retrieved.runs?.[0].value, 'result1');
     });
 
     test('should return undefined for non-existent entries', () => {

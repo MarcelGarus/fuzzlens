@@ -30,10 +30,11 @@ public class JsonLoggerTest {
 
     @Before
     public void setUp() {
-        logger = new JsonLogger();
         outputStream = new ByteArrayOutputStream();
         originalOut = System.out;
-        System.setOut(new PrintStream(outputStream));
+        PrintStream redirected = new PrintStream(outputStream);
+        System.setOut(redirected);
+        logger = new JsonLogger(redirected, null);
     }
 
     @After
@@ -67,38 +68,12 @@ public class JsonLoggerTest {
     }
 
     @Test
-    public void testLogRunWithNormalResult() {
-        logger.logRun(createMockRun("int", "string", false));
+    public void testLogProgress() {
+        logger.logProgress(123);
 
         JsonObject json = JsonParser.parseString(getCapturedOutput()).getAsJsonObject();
-        assertEquals("run", json.get("type").getAsString());
-        assertTrue(json.has("universe"));
-        assertTrue(json.has("input"));
-        assertEquals(false, json.get("didCrash").getAsBoolean());
-        assertEquals("Normal", json.get("outputType").getAsString());
-        assertEquals("string", json.get("typeName").getAsString());
-        assertEquals("testValue", json.get("value").getAsString());
-    }
-
-    @Test
-    public void testLogRunWithCrashResult() {
-        logger.logRun(createMockRun("int", "", true));
-
-        JsonObject json = JsonParser.parseString(getCapturedOutput()).getAsJsonObject();
-        assertEquals("run", json.get("type").getAsString());
-        assertEquals(true, json.get("didCrash").getAsBoolean());
-        assertEquals("Crash", json.get("outputType").getAsString());
-        assertTrue(json.get("message").getAsString().contains("TestError"));
-    }
-
-    @Test
-    public void testLogRunWithInputValueSerialization() {
-        logger.logRun(createMockRun("int", "string", false));
-
-        JsonObject json = JsonParser.parseString(getCapturedOutput()).getAsJsonObject();
-        JsonObject input = json.getAsJsonObject("input");
-        assertEquals("Int", input.get("type").getAsString());
-        assertEquals(42, input.get("value").getAsInt());
+        assertEquals("progress", json.get("type").getAsString());
+        assertEquals(123, json.get("count").getAsInt());
     }
 
     @Test

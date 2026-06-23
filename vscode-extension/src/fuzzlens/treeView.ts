@@ -507,7 +507,7 @@ export class ResultsTreeProvider implements vscode.TreeDataProvider<FuzzLensTree
             if (cached) {
                 this.resultRoot = cached.analyses.get('treeList') || null;
                 this.runs = cached.runs || [];
-                this.runCount = cached.runs.length;
+                this.runCount = cached.runCount ?? cached.runs?.length ?? 0;
             }
         }
 
@@ -515,17 +515,13 @@ export class ResultsTreeProvider implements vscode.TreeDataProvider<FuzzLensTree
     }
 
     /**
-     * Update results from a process state (called when fuzzer finishes).
+     * Update results from a process state (called on each snapshot / when done).
      */
     async setResults(processState: ProcessState): Promise<void> {
         if (processState.analyses) {
             this.resultRoot = processState.analyses.get('treeList') || null;
         }
-        // Store raw runs in case analyses are not available
-        if (processState.results) {
-            this.runs = await processState.results.catch(() => []);
-            this.runCount = this.runs.length;
-        }
+        this.runCount = processState.runCount ?? this.runCount;
         this.refresh();
     }
 

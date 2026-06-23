@@ -7,13 +7,12 @@ import com.google.gson.annotations.SerializedName;
 import de.hpi.swa.generator.Trace;
 
 /**
- * A single fuzzing request. Doubles as the on-the-wire shape parsed from the
- * daemon's newline-delimited JSON protocol (see {@link DaemonMain}); for direct
- * CLI invocations {@link FuzzMain} builds one of these from the parsed arguments.
+ * A single fuzzing request: the on-the-wire shape parsed from the daemon's
+ * newline-delimited JSON protocol (see {@link DaemonMain}).
  */
 public class FuzzRequest {
 
-    // --- Daemon protocol envelope (null for CLI invocations) ---
+    // --- Daemon protocol envelope ---
 
     /** Correlation id echoed on every response line so the client can demux. */
     public Long id;

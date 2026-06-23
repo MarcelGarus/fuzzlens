@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ProcessState, FuzzerState, RunResult, ResultGroup, FuzzRunHandle } from '../types/state';
+import { ProcessState, FuzzerState, ResultGroup, FuzzRunHandle } from '../types/state';
 import { FuzzLensContext } from '../types/context';
 import { getCache } from './cache';
 import { getGraalLanguageForFile } from '../config/languages';
@@ -15,6 +15,8 @@ export const FUZZLENS_QUERIES = [
     'treeList',
     // Inline examples
     'relevantPairs',
+    // Inline "input → output" next to each return statement (curated server-side)
+    'returnExamples',
 ];
 
 export interface FuzzRunOptions {
@@ -60,12 +62,13 @@ export const startFuzzRun = (options: FuzzRunOptions): FuzzRunHandle => {
 const PROGRESS_THROTTLE_MS = 120;
 
 /**
- * Accumulate a run's streamed results into its process state.
+ * Wire a run's snapshot stream into its process state.
  *
- * The daemon streams typed `run` results as they're produced and `analysis`
- * results at the end. We accumulate them, keep the cache up to date, and fire
- * `onFuzzerProgress` (throttled for runs, immediately for analyses) so the UI
- * updates live. `onFuzzerResultsReady` fires once when the run finishes.
+ * The daemon emits curated snapshots — a progress count followed by the analysis
+ * results (including `returnExamples`) — periodically as the run improves, rather
+ * than one line per individual run. We store the latest snapshot, keep the cache
+ * current, and fire `onFuzzerProgress` (throttled, since a snapshot is a burst of
+ * lines) so the UI updates live. `onFuzzerResultsReady` fires once at the end.
  */
 export const streamRunIntoState = (
     ctx: FuzzLensContext,
@@ -82,36 +85,31 @@ export const streamRunIntoState = (
     // the output panel.
     const showErrors = options?.showErrors ?? true;
 
-    const runs: RunResult[] = [];
     const analyses = new Map<string, ResultGroup>();
-    processState.results = Promise.resolve(runs);
     processState.analyses = analyses;
+    processState.runCount = 0;
 
     // Timing milestones, so the output channel shows where the wall-clock goes:
-    // start → first result (engine/queue latency) → analysis → finish (total).
+    // start → first snapshot (engine/queue latency) → finish (total).
     const label = processState.functionName || 'file';
     const startedAt = processState.startedAt ?? Date.now();
-    let firstRunLogged = false;
-    let analysisLogged = false;
+    let firstSnapshotLogged = false;
     ctx.output.appendLine(`[${label}] started fuzzing`);
 
     let lastProgressAt = 0;
 
-    // Push the latest accumulated results into the cache and notify listeners.
+    // Push the latest snapshot into the cache and notify listeners.
     const commit = (final: boolean) => {
         // A run cancelled mid-flight (e.g. superseded by a fresh edit) must not
-        // write its now-stale partial results over the newer run's.
+        // write its now-stale snapshot over the newer run's.
         if (processState.cancelled) {
             return;
         }
 
-        // Snapshot so consumers that read asynchronously aren't surprised by later mutation.
-        processState.results = Promise.resolve(runs.slice());
-
         if (processState.file) {
             getCache().set(processState.file, processState.functionName, {
-                runs: runs.slice(),
                 analyses: new Map(analyses),
+                runCount: processState.runCount ?? 0,
                 timestamp: Date.now()
             });
         }
@@ -124,9 +122,9 @@ export const streamRunIntoState = (
         }
     };
 
-    // Throttle progress events: at most one per PROGRESS_THROTTLE_MS, but emit the
-    // first one immediately (leading edge) so streaming is visible even when the
-    // whole run finishes within one throttle window.
+    // Throttle progress events: at most one per PROGRESS_THROTTLE_MS. Each daemon
+    // snapshot is a burst of lines (progress + several analyses) that arrive back
+    // to back, so the throttle coalesces a burst into a single UI refresh.
     let progressTimer: NodeJS.Timeout | undefined;
     let progressPending = false;
     const scheduleProgress = () => {
@@ -150,25 +148,23 @@ export const streamRunIntoState = (
         progressPending = false;
     };
 
-    handle.onRun((run) => {
-        if (!firstRunLogged) {
-            firstRunLogged = true;
-            ctx.output.appendLine(`[${label}] first result after ${Date.now() - startedAt}ms`);
+    const noteFirstSnapshot = () => {
+        if (!firstSnapshotLogged) {
+            firstSnapshotLogged = true;
+            ctx.output.appendLine(`[${label}] first snapshot after ${Date.now() - startedAt}ms`);
         }
-        runs.push(run);
+    };
+
+    handle.onProgress((count) => {
+        noteFirstSnapshot();
+        processState.runCount = count;
         scheduleProgress();
     });
 
     handle.onAnalysis((query, root) => {
-        if (!analysisLogged) {
-            analysisLogged = true;
-            ctx.output.appendLine(`[${label}] analysis ready after ${Date.now() - startedAt}ms`);
-        }
+        noteFirstSnapshot();
         analyses.set(query, root);
-        // Analyses (signatures, grouped views, inline examples) are high-value —
-        // surface them immediately rather than waiting for the next throttle tick.
-        cancelScheduledProgress();
-        commit(false);
+        scheduleProgress();
     });
 
     handle.onDone((code, errorMessage) => {
@@ -182,7 +178,7 @@ export const streamRunIntoState = (
                 ctx.output.show(true); // Surface the output channel on error
             }
         } else {
-            ctx.output.appendLine(`[${label}] finished: ${runs.length} results in ${elapsed}ms`);
+            ctx.output.appendLine(`[${label}] finished: ${processState.runCount ?? 0} results in ${elapsed}ms`);
         }
         commit(true);
     });

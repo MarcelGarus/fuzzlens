@@ -96,13 +96,10 @@ export const setupFuzzerResultsListener = (ctx: FuzzLensContext): vscode.Disposa
 };
 
 export const handleFuzzerResults = async (ctx: FuzzLensContext, processState: ProcessState) => {
-    const runs = await processState.results;
-    if (!runs || runs.length === 0) {
-        ctx.output.appendLine('No fuzzing results received.');
+    // Nothing to render until the first curated snapshot arrives.
+    if (!processState.analyses || processState.analyses.size === 0) {
         return;
     }
-
-    logFuzzerResults(ctx.output, runs);
 
     const showInline = getShowInlineExamples();
     const wasPending = ctx.state.inlineExamples.pendingFiles.has(processState.file);
@@ -147,8 +144,6 @@ export const handleFuzzerResults = async (ctx: FuzzLensContext, processState: Pr
 
         if (relevantPairs) {
             addInlineExamplesFromAnalysis(ctx, relevantPairs, filePath, line, functionName);
-        } else {
-            addInlineExamplesFromRuns(ctx, runs, filePath, line, functionName);
         }
     }
 };
@@ -203,44 +198,6 @@ const addInlineExamplesFromAnalysis = (
         functionName,
         line,
         examples: examples.slice(0, maxExamples),
-        currentIndex: 0
-    });
-
-    const resolvedLine = resolveLineNumber(line, editor.document);
-    showExampleAtLine(editor, resolvedLine, examples[0]);
-};
-
-const addInlineExamplesFromRuns = (ctx: FuzzLensContext, results: RunResult[], filePath: string, line: number, functionName: string) => {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-        vscode.window.showErrorMessage('No active editor to add fuzzer result decorations to.');
-        return;
-    }
-
-    const maxExamples = getMaxInlineExamples();
-
-    // Pick diverse examples (first, last, and some in between)
-    const examples: string[] = [];
-    const indices = selectDiverseIndices(results.length, maxExamples);
-
-    for (const idx of indices) {
-        const result = results[idx];
-        const exampleStr = resultToDecorationString(result);
-        if (exampleStr) {
-            examples.push(exampleStr);
-        }
-    }
-
-    if (examples.length === 0) { return; }
-
-    const state = ctx.state.inlineExamples;
-    const key = `${filePath}:${functionName}`;
-
-    state.examples.set(key, {
-        filePath,
-        functionName,
-        line,
-        examples,
         currentIndex: 0
     });
 
@@ -318,19 +275,6 @@ const showExampleAtLine = (editor: vscode.TextEditor, line: number, text: string
     applyDecoration(editor, line, text);
 };
 
-const selectDiverseIndices = (total: number, count: number): number[] => {
-    if (total <= count) {
-        return Array.from({ length: total }, (_, i) => i);
-    }
-
-    const indices: number[] = [];
-    const step = (total - 1) / (count - 1);
-    for (let i = 0; i < count; i++) {
-        indices.push(Math.round(i * step));
-    }
-    return indices;
-};
-
 const resultToDecorationString = (result: RunResult | RunResultInGroup, maxLength: number = 500): string => {
     const inputValue = valueToString(result.input, result.universe);
 
@@ -344,12 +288,6 @@ const resultToDecorationString = (result: RunResult | RunResultInGroup, maxLengt
 
     // Don't truncate here - let applyDecoration handle truncation based on line length
     return decorationStr;
-};
-
-const logFuzzerResults = (output: vscode.OutputChannel, results: RunResult[]) => {
-    // Logged on each (throttled) streaming update, so keep it to a single line —
-    // the growing count is itself the visible evidence that results stream in.
-    output.appendLine(`Received ${results.length} fuzzing results so far.`);
 };
 
 const valueAndTypeNameToString = (value: string, typeName: string): string => {

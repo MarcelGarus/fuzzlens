@@ -1,5 +1,5 @@
 import { Value, Universe, Shape, GroupKey, SingleKey, CompositeKey, KeyPart } from '../types/state';
-import { RunResult } from '../types/state';
+import { RunResult, RunResultInGroup } from '../types/state';
 
 export interface ShapeValue {
     id?: { value: number };
@@ -228,7 +228,7 @@ export function formatValueType(value: Value, universe: Universe): string {
  * Format a run result as "input → output" for display.
  */
 export function formatRunResult(
-    result: RunResult,
+    result: RunResult | RunResultInGroup,
     options: { maxLength?: number } = {}
 ): string {
     const { maxLength = 80 } = options;

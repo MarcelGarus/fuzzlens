@@ -40,7 +40,7 @@
                     </execution>
                 </executions>
                 <configuration>
-                    <mainClass>de.hpi.swa.cli.FuzzMain</mainClass>
+                    <mainClass>de.hpi.swa.cli.DaemonMain</mainClass>
                 </configuration>
             </plugin>
         </plugins>
@@ -182,7 +182,7 @@
                         </executions>
                         <configuration>
                             <imageName>graalfuzz</imageName>
-                            <mainClass>de.hpi.swa.cli.FuzzMain</mainClass>
+                            <mainClass>de.hpi.swa.cli.DaemonMain</mainClass>
                             <fallback>false</fallback>
                             <verbose>true</verbose>
                             <buildArgs>
