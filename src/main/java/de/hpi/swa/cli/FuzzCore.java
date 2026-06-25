@@ -19,7 +19,6 @@ import de.hpi.swa.analysis.ReturnExamples;
 import de.hpi.swa.cli.logger.ResultLogger;
 import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.coverage.CoverageInstrument;
-import de.hpi.swa.generator.Minimizer;
 import de.hpi.swa.generator.Pool;
 import de.hpi.swa.generator.Run;
 import de.hpi.swa.generator.Runner;
@@ -45,6 +44,17 @@ public final class FuzzCore {
 
     /** Fixed wall-clock budget for one fuzzed function invocation. */
     private static final Duration EXECUTION_TIMEOUT = Duration.ofMillis(250);
+
+    /**
+     * Wall-clock budget for one whole fuzzing job. Caps how long a single function
+     * can hold the (serial) daemon worker, so a slow function — one that keeps
+     * hitting {@link #EXECUTION_TIMEOUT} — can't starve other functions queued
+     * behind it. {@code req.iterations} still bounds the result count (and memory).
+     */
+    private static final Duration FUZZ_BUDGET = Duration.ofSeconds(3);
+
+    /** How often to emit a snapshot, by wall-clock — so the first feedback is prompt regardless of per-run latency. */
+    private static final Duration SNAPSHOT_INTERVAL = Duration.ofMillis(500);
 
     private FuzzCore() {
     }
@@ -83,10 +93,6 @@ public final class FuzzCore {
         List<String> queries = req.queries == null ? List.of()
                 : req.queries.stream().filter(Analysis.available()::contains).toList();
 
-        // Emit ~10 curated snapshots over the run, regardless of iteration count.
-        int snapshotEvery = Math.max(50, req.iterations / 10);
-        int sinceSnapshot = 0;
-
         // Fresh context per request, off the shared (warm) engine.
         try (Context context = Context.newBuilder().engine(engine).allowAllAccess(true).build()) {
             // A syntax/eval error surfaces as a PolyglotException; let it propagate
@@ -120,6 +126,11 @@ public final class FuzzCore {
             Random random = new Random();
             List<Run> allResults = new ArrayList<>();
 
+            // Bound the whole job by wall-clock (covers seed replay + fuzzing) so it
+            // can't monopolise the serial worker. Snapshots fire on a time cadence.
+            long deadlineNanos = System.nanoTime() + FUZZ_BUDGET.toNanos();
+            long lastSnapshotNanos = System.nanoTime();
+
             // Replay seed traces first to re-confirm the examples already shown
             // against freshly-edited code (a fast, deterministic pass) before the
             // slower random fuzzing below.
@@ -127,6 +138,9 @@ public final class FuzzCore {
                 for (Trace seed : req.seedTraces) {
                     if (cancelled.getAsBoolean()) {
                         return List.of();
+                    }
+                    if (System.nanoTime() >= deadlineNanos) {
+                        break;
                     }
                     if (seed == null || seed.entries.isEmpty()
                             || !(seed.entries.get(0) instanceof Trace.Call)) {
@@ -139,13 +153,20 @@ public final class FuzzCore {
                         pool.add(result.getTrace(), instrument.coverage);
                     }
                     allResults.add(deduplicatedResult);
+
+                    lastSnapshotNanos = maybeSnapshot(lastSnapshotNanos, logger, sourceText, allResults, queries,
+                            returnExamplesWanted);
                 }
             }
 
-            // Random fuzzing loop.
+            // Random fuzzing loop, bounded by both the iteration cap (memory) and the
+            // wall-clock budget (fairness), whichever comes first.
             for (int i = 0; i < req.iterations; i++) {
                 if (cancelled.getAsBoolean()) {
                     return List.of();
+                }
+                if (System.nanoTime() >= deadlineNanos) {
+                    break;
                 }
                 var trace = pool.createNewTrace();
                 instrument.coverage = new Coverage();
@@ -157,37 +178,42 @@ public final class FuzzCore {
                 }
                 allResults.add(deduplicatedResult);
 
-                if (++sinceSnapshot >= snapshotEvery) {
-                    sinceSnapshot = 0;
-                    emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted, null, null);
-                }
+                lastSnapshotNanos = maybeSnapshot(lastSnapshotNanos, logger, sourceText, allResults, queries,
+                        returnExamplesWanted);
             }
 
-            // Final snapshot reflecting every result. Here — and only here, since it
-            // re-runs the function many times — displayed examples are minimized to
-            // smaller inputs that still represent the same curated behaviour.
-            Minimizer minimizer = new Minimizer(function, instrument, context, EXECUTION_TIMEOUT);
-            ReturnExamples.ExampleMinimizer returnMinimizer = (run, line) -> minimizer.minimize(run,
-                    candidate -> !candidate.didCrash() && ReturnExamples.coveredUserLines(candidate).contains(line));
-            Analysis.SampleMinimizer sampleMinimizer = (run, invariant) -> didTimeout(run) ? run
-                    : minimizer.minimize(run, invariant);
-            emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted, returnMinimizer,
-                    sampleMinimizer);
+            // Final snapshot reflecting every result. Examples are already curated
+            // toward simple inputs by the pool's complexity-aware scoring, so no
+            // separate minimization pass is needed here.
+            emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted);
 
             return pool.bestTraces(MAX_SEED_TRACES);
         }
     }
 
+    /**
+     * Emit a snapshot if at least {@link #SNAPSHOT_INTERVAL} has elapsed since the
+     * last one, returning the timestamp to track for the next call (unchanged if no
+     * snapshot was emitted).
+     */
+    private static long maybeSnapshot(long lastSnapshotNanos, ResultLogger logger, String sourceText,
+            List<Run> allResults, List<String> queries, boolean returnExamplesWanted) {
+        if (System.nanoTime() - lastSnapshotNanos < SNAPSHOT_INTERVAL.toNanos()) {
+            return lastSnapshotNanos;
+        }
+        emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted);
+        return System.nanoTime();
+    }
+
     /** Emit one curated snapshot: progress count, the return-line examples, then each analysis. */
     private static void emitSnapshot(ResultLogger logger, String sourceText, List<Run> allResults,
-            List<String> queries, boolean returnExamplesWanted, ReturnExamples.ExampleMinimizer returnMinimizer,
-            Analysis.SampleMinimizer sampleMinimizer) {
+            List<String> queries, boolean returnExamplesWanted) {
         logger.logProgress(allResults.size());
         if (returnExamplesWanted) {
-            logger.logAnalysis(ReturnExamples.QUERY, ReturnExamples.curate(sourceText, allResults, returnMinimizer));
+            logger.logAnalysis(ReturnExamples.QUERY, ReturnExamples.curate(sourceText, allResults));
         }
         for (String name : queries) {
-            logger.logAnalysis(name, Analysis.run(name, allResults, sampleMinimizer));
+            logger.logAnalysis(name, Analysis.run(name, allResults));
         }
     }
 

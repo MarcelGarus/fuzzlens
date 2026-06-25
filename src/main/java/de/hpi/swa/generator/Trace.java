@@ -141,9 +141,9 @@ public class Trace {
                     var universe = toUniverse();
                     newTrace.add(switch (entry) {
                         case Call(var args) ->
-                            new Call(args.stream().map(ignored -> universe.generateValue(random)).toList());
+                            new Call(args.stream().map(arg -> universe.rethinkValue(arg, random)).toList());
                         case Member(var id, var key, var value) ->
-                            new Member(id, key, universe.generateValue(random));
+                            new Member(id, key, universe.rethinkValue(value, random));
                         default ->
                             throw new UnsupportedOperationException("Not supported yet.");
                     });

@@ -12,6 +12,17 @@ import de.hpi.swa.generator.Trace.Call;
 
 public class Pool {
 
+    /** Each covered element is worth this much in the score's exponent. */
+    private static final double COVERAGE_WEIGHT = 10.0;
+
+    /**
+     * Larger values soften how sharply complexity is penalised. The penalty is
+     * mapped into {@code [0, 1)}, strictly less than {@link #COVERAGE_WEIGHT}, so
+     * coverage always dominates: complexity only ranks inputs that reach the same
+     * code, preferring the simpler one (a built-in minimization pressure).
+     */
+    private static final double COMPLEXITY_SOFTENING = 25.0;
+
     public static class PoolEntry {
 
         public final Trace trace;
@@ -21,7 +32,12 @@ public class Pool {
         public PoolEntry(Trace trace, Coverage coverage) {
             this.trace = trace;
             this.coverage = coverage;
-            this.quality = Math.pow(2, coverage.getCovered().size() * 10.0 + trace.entries.size());
+            double coverageScore = coverage.getCovered().size() * COVERAGE_WEIGHT;
+            // Map complexity into [0, 1): higher complexity → larger penalty, but
+            // never enough to outweigh a single covered element.
+            double complexity = Complexity.of(trace);
+            double complexityPenalty = complexity / (complexity + COMPLEXITY_SOFTENING);
+            this.quality = Math.pow(2, coverageScore - complexityPenalty);
         }
     }
 

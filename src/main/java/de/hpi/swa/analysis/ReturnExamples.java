@@ -10,8 +10,8 @@ import java.util.regex.Pattern;
 
 import com.oracle.truffle.api.source.SourceSection;
 
+import de.hpi.swa.generator.Complexity;
 import de.hpi.swa.generator.Run;
-import de.hpi.swa.generator.Value;
 
 /**
  * Curates one representative example per {@code return} statement in the fuzzed
@@ -34,21 +34,7 @@ public final class ReturnExamples {
     private ReturnExamples() {
     }
 
-    /**
-     * Hook for shrinking the example chosen for a given return line before it is
-     * shown. Given the selected run and its 1-based source line, it returns a
-     * minimized run reaching the same line (see {@code de.hpi.swa.generator.Minimizer}).
-     */
-    @FunctionalInterface
-    public interface ExampleMinimizer {
-        Run minimize(Run run, int line);
-    }
-
     public static Group curate(String source, List<Run> runs) {
-        return curate(source, runs, null);
-    }
-
-    public static Group curate(String source, List<Run> runs, ExampleMinimizer minimizer) {
         // 1-based source lines that are `return` statements.
         Set<Integer> returnLines = new HashSet<>();
         String[] lines = source.split("\n", -1);
@@ -72,7 +58,7 @@ public final class ReturnExamples {
                     continue;
                 }
                 Run existing = best.get(line);
-                if (existing == null || inputLength(run) < inputLength(existing)) {
+                if (existing == null || inputComplexity(run) < inputComplexity(existing)) {
                     best.put(line, run);
                 }
             }
@@ -81,12 +67,6 @@ public final class ReturnExamples {
         List<Group> children = best.entrySet().stream().map(entry -> {
             int line = entry.getKey();
             Run chosen = entry.getValue();
-            if (minimizer != null) {
-                Run reduced = minimizer.minimize(chosen, line);
-                if (reduced != null) {
-                    chosen = reduced;
-                }
-            }
             Map<String, Object> aggregations = new LinkedHashMap<>();
             aggregations.put("Line", line);
             return Group.leaf(String.valueOf(line), aggregations, List.of(chosen));
@@ -108,7 +88,7 @@ public final class ReturnExamples {
         return lines;
     }
 
-    private static int inputLength(Run run) {
-        return Value.formatArgs(run.getArgs(), run.getUniverse()).length();
+    private static double inputComplexity(Run run) {
+        return Complexity.of(run.getTrace());
     }
 }
