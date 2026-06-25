@@ -16,9 +16,13 @@ public class TraceEntryAdapter implements JsonSerializer<Trace.TraceEntry>, Json
         switch (entry) {
             case Trace.Call call -> {
                 result.addProperty("type", "Call");
-                // Serialize as Value (not the runtime record type) so the type
-                // tag is emitted and the trace can be deserialized for replay.
-                result.add("arg", context.serialize(call.arg(), Value.class));
+                // Serialize each argument as Value (not the runtime record type) so
+                // the type tag is emitted and the trace can be deserialized for replay.
+                JsonArray args = new JsonArray();
+                for (Value arg : call.args()) {
+                    args.add(context.serialize(arg, Value.class));
+                }
+                result.add("args", args);
             }
             case Trace.QueryMember query -> {
                 result.addProperty("type", "QueryMember");
@@ -52,7 +56,19 @@ public class TraceEntryAdapter implements JsonSerializer<Trace.TraceEntry>, Json
         String type = obj.get("type").getAsString();
         
         return switch (type) {
-            case "Call" -> new Trace.Call(context.deserialize(obj.get("arg"), Value.class));
+            case "Call" -> {
+                java.util.List<Value> args = new java.util.ArrayList<>();
+                JsonElement rawArgs = obj.get("args");
+                if (rawArgs != null && rawArgs.isJsonArray()) {
+                    for (JsonElement arg : rawArgs.getAsJsonArray()) {
+                        args.add(context.deserialize(arg, Value.class));
+                    }
+                } else if (obj.has("arg")) {
+                    // Backwards compatibility with the single-argument wire format.
+                    args.add(context.deserialize(obj.get("arg"), Value.class));
+                }
+                yield new Trace.Call(args);
+            }
             case "QueryMember" -> new Trace.QueryMember(
                 context.deserialize(obj.get("id"), Value.ObjectId.class),
                 obj.get("key").getAsString()

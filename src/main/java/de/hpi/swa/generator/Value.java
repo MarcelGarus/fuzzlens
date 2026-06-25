@@ -103,6 +103,26 @@ public sealed interface Value {
         return builder.toString();
     }
 
+    /**
+     * Format a whole argument list. A single argument is rendered bare (unchanged
+     * single-argument behaviour); zero or several arguments are rendered as a
+     * parenthesized, comma-separated tuple.
+     */
+    public static String formatArgs(java.util.List<Value> args, Universe universe) {
+        if (args.size() == 1) {
+            return format(args.get(0), universe);
+        }
+        var builder = new StringBuilder("(");
+        for (var i = 0; i < args.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            format(args.get(i), universe, 0, builder);
+        }
+        builder.append(")");
+        return builder.toString();
+    }
+
     static void format(Value value, Universe universe, int depth, StringBuilder builder) {
         if (depth > 5) {
             builder.append("...");

@@ -17,7 +17,7 @@ suite('FuzzLens Cache Test Suite', () => {
     const createMockRun = (value: string): RunResult => ({
         type: 'run',
         universe: { objects: {} },
-        input: { type: 'String', value: 'test' },
+        args: [{ type: 'String', value: 'test' }],
         didCrash: false,
         outputType: 'Normal',
         typeName: 'String',

@@ -18,3 +18,12 @@ def fib(n):
 
 def distance(a, b):
     return sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
+
+def validate_password(password):
+    if len(password) < 6:
+        return False
+    if not any(c.isdigit() for c in password):
+        return False
+    if not any(c.isalpha() for c in password):
+        return False
+    return True

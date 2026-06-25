@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { FuzzLensContext } from '../types/context';
 import { getCache } from '../services/cache';
 import { ResultGroup } from '../types/state';
-import { formatValue } from './formatting';
+import { formatArgs } from './formatting';
 import { getFunctionAtPosition } from '../services/symbols';
 import { getLanguageSelector } from '../config/languages';
 
@@ -170,7 +170,7 @@ export class FuzzLensHoverProvider implements vscode.HoverProvider {
                 let exampleStr = '';
                 if (group.samples && group.samples.length > 0) {
                     const example = group.samples[0];
-                    exampleStr = ` - e.g. \`${formatValue(example.input, example.universe)}\``;
+                    exampleStr = ` - e.g. \`${formatArgs(example.args, example.universe)}\``;
                 }
 
                 md.appendMarkdown(`- ⚠️ \`${group.key}\`${countStr}${exampleStr}\n`);
@@ -186,7 +186,7 @@ export class FuzzLensHoverProvider implements vscode.HoverProvider {
         if (validExamples?.samples?.length) {
             md.appendMarkdown(`**Examples**\n\n`);
             for (const result of validExamples.samples.slice(0, 5)) {
-                const input = formatValue(result.input, result.universe);
+                const input = formatArgs(result.args, result.universe);
                 md.appendMarkdown(`- \`${input}\` → \`${result.value}\`\n`);
             }
         }

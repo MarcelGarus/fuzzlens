@@ -18,7 +18,7 @@ public class Trace {
         }
     }
 
-    public record Call(Value arg) implements TraceEntry.Decision {
+    public record Call(java.util.List<Value> args) implements TraceEntry.Decision {
 
     }
 
@@ -74,8 +74,8 @@ public class Trace {
                 }
             }
             switch (entry) {
-                case Call(var arg) ->
-                    sb.append("call with ").append(arg);
+                case Call(var args) ->
+                    sb.append("call with ").append(args);
                 case QueryMember(var object, var key) ->
                     sb.append(object).append(".").append(key);
                 case Member(var object, var key, var value) -> {
@@ -140,8 +140,8 @@ public class Trace {
                 if (numDecisionsSoFar > decisionsToKeep) {
                     var universe = toUniverse();
                     newTrace.add(switch (entry) {
-                        case Call(var arg) ->
-                            new Call(universe.generateValue(random));
+                        case Call(var args) ->
+                            new Call(args.stream().map(ignored -> universe.generateValue(random)).toList());
                         case Member(var id, var key, var value) ->
                             new Member(id, key, universe.generateValue(random));
                         default ->

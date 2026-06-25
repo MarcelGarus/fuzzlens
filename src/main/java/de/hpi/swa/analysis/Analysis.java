@@ -94,7 +94,7 @@ public final class Analysis {
     }
 
     static Shape inputShape(Run r) {
-        return Shape.fromValue(r.getInput(), r.getUniverse());
+        return Shape.ofArgs(r.getArgs(), r.getUniverse());
     }
 
     static String inputKind(Run r) {
@@ -102,7 +102,7 @@ public final class Analysis {
     }
 
     static String inputValue(Run r) {
-        return Value.format(r.getInput(), r.getUniverse());
+        return Value.formatArgs(r.getArgs(), r.getUniverse());
     }
 
     // === Shared helpers ===
@@ -171,9 +171,12 @@ public final class Analysis {
     static String shapeUnion(Collection<Shape> shapes) {
         var primitives = new ArrayList<String>();
         var objects = new ArrayList<Shape.ObjectShape>();
+        var tuples = new ArrayList<Shape.Tuple>();
         for (Shape s : shapes) {
             if (s instanceof Shape.ObjectShape o) {
                 objects.add(o);
+            } else if (s instanceof Shape.Tuple t) {
+                tuples.add(t);
             } else {
                 primitives.add(s.typeName());
             }
@@ -184,7 +187,32 @@ public final class Analysis {
         if (!objects.isEmpty()) {
             parts.add(objectUnion(objects));
         }
+        if (!tuples.isEmpty()) {
+            parts.add(tupleUnion(tuples));
+        }
         return parts.isEmpty() ? "any" : String.join(" | ", parts);
+    }
+
+    /**
+     * Merge multi-argument tuple shapes by unioning each argument position
+     * independently — so the signature shows the full structure of every argument
+     * (e.g. {@code ({x: double, y: double}, {x: double, y: double})}) rather than
+     * collapsing objects to {@code object}. Tuples of differing arity are unioned.
+     */
+    private static String tupleUnion(List<Shape.Tuple> tuples) {
+        return tuples.stream()
+                .collect(groupingBy(t -> t.elements().size(), LinkedHashMap::new, toList()))
+                .values().stream()
+                .map(group -> {
+                    int arity = group.get(0).elements().size();
+                    var columns = new ArrayList<String>(arity);
+                    for (int i = 0; i < arity; i++) {
+                        final int position = i;
+                        columns.add(shapeUnion(group.stream().map(t -> t.elements().get(position)).toList()));
+                    }
+                    return "(" + String.join(", ", columns) + ")";
+                })
+                .collect(java.util.stream.Collectors.joining(" | "));
     }
 
     private static String objectUnion(List<Shape.ObjectShape> objects) {

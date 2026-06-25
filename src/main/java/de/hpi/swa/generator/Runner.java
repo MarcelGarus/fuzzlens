@@ -1,7 +1,9 @@
 package de.hpi.swa.generator;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -39,10 +41,48 @@ public abstract class Runner {
 
     public static Trace runWithRandomArgs(org.graalvm.polyglot.Value function, Random random) {
         var universe = new Universe();
-        var input = universe.generateValue(random);
+        var args = randomArgs(universe, arity(function), random);
         var trace = new Trace();
-        run(function, universe, input, trace, random, null, null);
+        run(function, universe, args, trace, random, null, null);
         return trace;
+    }
+
+    /** Generate {@code arity} independent random argument values. */
+    public static List<Value> randomArgs(Universe universe, int arity, Random random) {
+        var args = new ArrayList<Value>(arity);
+        for (var i = 0; i < arity; i++) {
+            args.add(universe.generateValue(random));
+        }
+        return args;
+    }
+
+    /**
+     * Best-effort number of positional parameters the function declares, so the
+     * fuzzer feeds it the right number of arguments. Python functions expose it via
+     * {@code __code__.co_argcount}, JS functions via {@code length}. Falls back to a
+     * single argument when arity can't be determined.
+     */
+    public static int arity(org.graalvm.polyglot.Value function) {
+        try {
+            if (function.hasMember("__code__")) {
+                var code = function.getMember("__code__");
+                if (code != null && code.hasMember("co_argcount")) {
+                    var count = code.getMember("co_argcount");
+                    if (count.fitsInInt() && count.asInt() >= 0) {
+                        return count.asInt();
+                    }
+                }
+            }
+            if (function.hasMember("length")) {
+                var length = function.getMember("length");
+                if (length.fitsInInt() && length.asInt() >= 0) {
+                    return length.asInt();
+                }
+            }
+        } catch (RuntimeException e) {
+            // Introspection isn't supported for this language/value; fall back below.
+        }
+        return 1;
     }
 
     public static Run run(org.graalvm.polyglot.Value function, Trace startingWith, Random random) {
@@ -56,10 +96,10 @@ public abstract class Runner {
     public static Run run(org.graalvm.polyglot.Value function, Trace startingWith, Random random, Coverage coverage,
             Context context, Duration timeout) {
         var universe = startingWith.toUniverse();
-        var input = ((Call) startingWith.entries.get(0)).arg();
+        var args = ((Call) startingWith.entries.get(0)).args();
         var trace = new Trace();
-        var output = run(function, universe, input, trace, random, context, timeout);
-        return new Run(universe, input, output, trace, coverage);
+        var output = run(function, universe, args, trace, random, context, timeout);
+        return new Run(universe, args, output, trace, coverage);
     }
 
     public sealed interface FunctionResult {
@@ -78,13 +118,16 @@ public abstract class Runner {
         }
     }
 
-    private static FunctionResult run(org.graalvm.polyglot.Value function, Universe universe, Value input, Trace trace,
-            Random random, Context context, Duration timeout) {
-        trace.add(new Call(input));
+    private static FunctionResult run(org.graalvm.polyglot.Value function, Universe universe, List<Value> args,
+            Trace trace, Random random, Context context, Duration timeout) {
+        trace.add(new Call(args));
         var timeoutState = new TimeoutState(timeout);
         try {
-            var polyglotInput = toPolyglotValue(input, universe, trace, random);
-            var returnValue = execute(function, polyglotInput, context, timeoutState);
+            var polyglotArgs = new Object[args.size()];
+            for (var i = 0; i < args.size(); i++) {
+                polyglotArgs[i] = toPolyglotValue(args.get(i), universe, trace, random);
+            }
+            var returnValue = execute(function, polyglotArgs, context, timeoutState);
             if (timeoutState.timedOut.get()) {
                 return crash(trace, timeoutState.message(), null);
             }
@@ -101,7 +144,7 @@ public abstract class Runner {
     }
 
     private static org.graalvm.polyglot.Value execute(org.graalvm.polyglot.Value function,
-            org.graalvm.polyglot.Value input, Context context, TimeoutState timeoutState) {
+            Object[] args, Context context, TimeoutState timeoutState) {
         ScheduledFuture<?> timeoutTask = null;
         AtomicBoolean active = new AtomicBoolean(true);
         if (context != null && timeoutState.enabled()) {
@@ -122,7 +165,7 @@ public abstract class Runner {
             }, timeoutMillis, TimeUnit.MILLISECONDS);
         }
         try {
-            return function.execute(input);
+            return function.execute(args);
         } finally {
             active.set(false);
             if (timeoutTask != null) {

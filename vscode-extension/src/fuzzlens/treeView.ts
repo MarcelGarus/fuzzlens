@@ -3,7 +3,7 @@ import * as path from 'path';
 import { FunctionInfo, ResultGroup, RunResult, ProcessState, RunResultInGroup } from '../types/state';
 import { getCache } from '../services/cache';
 import { FuzzLensContext } from '../types/context';
-import { formatValue } from './formatting';
+import { formatArgs } from './formatting';
 import { isSupportedFile, SUPPORTED_FILES_GLOB } from '../config/languages';
 import { shouldIgnoreFolder } from '../config/defaults';
 import { discoverFunctionsInFile } from '../services/symbols';
@@ -158,7 +158,7 @@ export class SampleItem extends vscode.TreeItem {
     }
 
     private static formatSample(result: RunResult | RunResultInGroup, functionName?: string): string {
-        const input = formatValue(result.input, result.universe);
+        const input = formatArgs(result.args, result.universe);
         const fnCall = functionName ? `${functionName}(${input})` : input;
         if (result.didCrash) {
             const errorType = result.message?.split(':')[0] || 'Error';
@@ -172,7 +172,7 @@ export class SampleItem extends vscode.TreeItem {
         if (functionName) {
             lines.push(`Function: ${functionName}`);
         }
-        lines.push(`Input: ${formatValue(result.input, result.universe)}`);
+        lines.push(`Input: ${formatArgs(result.args, result.universe)}`);
         if (result.didCrash) {
             lines.push(`Error: ${result.message || 'Unknown error'}`);
         } else {

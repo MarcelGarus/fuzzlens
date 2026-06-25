@@ -27,10 +27,12 @@ public class Pool {
 
     private final Map<Trace, PoolEntry> entries;
     private final Random random;
+    private final int arity;
 
-    public Pool() {
+    public Pool(int arity) {
         this.entries = new HashMap<>();
         this.random = new Random();
+        this.arity = arity;
     }
 
     public void add(Trace trace, Coverage coverage) {
@@ -48,7 +50,7 @@ public class Pool {
     public Trace createNewTrace() {
         if (entries.isEmpty() || random.nextDouble() < 0.01) {
             var trace = new Trace();
-            trace.add(new Call((new Universe()).generateValue(random)));
+            trace.add(new Call(Runner.randomArgs(new Universe(), arity, random)));
             return trace;
         }
 

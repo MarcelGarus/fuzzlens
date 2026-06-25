@@ -53,7 +53,7 @@ public class JsonLoggerTest {
                 ? new FunctionResult.Crash("TestError: Something went wrong", List.of("at line 1", "at line 2"))
                 : new FunctionResult.Normal(outputType, "testValue");
         Trace trace = new Trace();
-        return new Run(universe, input, output, trace, new de.hpi.swa.coverage.Coverage());
+        return new Run(universe, List.of(input), output, trace, new de.hpi.swa.coverage.Coverage());
     }
 
     private Value createMockValue(String type, Universe universe) {
@@ -136,7 +136,7 @@ public class JsonLoggerTest {
 
         JsonArray samples = rootJson.getAsJsonArray("samples");
         assertEquals(2, samples.size());
-        JsonObject input1 = samples.get(0).getAsJsonObject().getAsJsonObject("input");
+        JsonObject input1 = samples.get(0).getAsJsonObject().getAsJsonArray("args").get(0).getAsJsonObject();
         assertEquals("Int", input1.get("type").getAsString());
     }
 }

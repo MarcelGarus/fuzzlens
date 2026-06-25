@@ -133,6 +133,18 @@ public sealed interface Shape {
         }
     }
 
+    /**
+     * The shape of an argument list with more than one element (the multi-argument
+     * case). A single argument keeps its bare shape — see {@link #ofArgs} — so
+     * single-argument behaviour is unchanged.
+     */
+    record Tuple(List<Shape> elements) implements Shape {
+        @Override
+        public String toString() {
+            return "(" + elements.stream().map(java.lang.Object::toString).collect(Collectors.joining(", ")) + ")";
+        }
+    }
+
     public default String typeName() {
         return switch (this) {
             case ObjectShape o -> "object";
@@ -141,7 +153,20 @@ public sealed interface Shape {
             case Int i -> "int";
             case Double d -> "double";
             case StringShape s -> "string";
+            case Tuple t -> "(" + t.elements().stream().map(Shape::typeName).collect(Collectors.joining(", ")) + ")";
         };
+    }
+
+    /**
+     * The shape of a whole argument list. A single argument is represented by its
+     * bare shape (so single-argument analysis is identical to before); zero or
+     * several arguments are wrapped in a {@link Tuple}.
+     */
+    public static Shape ofArgs(List<Value> args, Universe universe) {
+        if (args.size() == 1) {
+            return fromValue(args.get(0), universe);
+        }
+        return new Tuple(args.stream().map(arg -> fromValue(arg, universe)).toList());
     }
 
     public static Shape fromValue(Value value, Universe universe) {

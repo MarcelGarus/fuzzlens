@@ -20,7 +20,11 @@ public class RunResultAdapter implements JsonSerializer<Run>, JsonDeserializer<R
         JsonObject result = new JsonObject();
         
         result.add("universe", context.serialize(src.universe()));
-        result.add("input", context.serialize(src.input(), Value.class));
+        JsonArray args = new JsonArray();
+        for (Value arg : src.args()) {
+            args.add(context.serialize(arg, Value.class));
+        }
+        result.add("args", args);
         result.add("didCrash", context.serialize(src.didCrash()));
 
         switch (src.output()) {
@@ -62,7 +66,16 @@ public class RunResultAdapter implements JsonSerializer<Run>, JsonDeserializer<R
         // deserialize normally except for output
         
         Universe universe = context.deserialize(obj.get("universe"), de.hpi.swa.generator.Universe.class);
-        Value input = context.deserialize(obj.get("input"), Value.class);
+        List<Value> args = new java.util.ArrayList<>();
+        JsonElement rawArgs = obj.get("args");
+        if (rawArgs != null && rawArgs.isJsonArray()) {
+            for (JsonElement arg : rawArgs.getAsJsonArray()) {
+                args.add(context.deserialize(arg, Value.class));
+            }
+        } else if (obj.has("input")) {
+            // Backwards compatibility with the single-argument wire format.
+            args.add(context.deserialize(obj.get("input"), Value.class));
+        }
         Trace trace = context.deserialize(obj.get("trace"), Trace.class);
         Runner.FunctionResult output = switch (obj.get("outputType").getAsString()) {
             case "Normal" -> new Runner.FunctionResult.Normal(
@@ -75,6 +88,6 @@ public class RunResultAdapter implements JsonSerializer<Run>, JsonDeserializer<R
             );
             default -> throw new JsonParseException("Unknown output type");
         };
-        return new Run(universe, input, output, trace, new de.hpi.swa.coverage.Coverage());
+        return new Run(universe, args, output, trace, new de.hpi.swa.coverage.Coverage());
     }
 }

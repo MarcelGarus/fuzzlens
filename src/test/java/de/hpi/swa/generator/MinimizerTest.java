@@ -25,7 +25,7 @@ public class MinimizerTest {
             Run minimized = new Minimizer(function, new CoverageInstrument()).minimize(run,
                     candidate -> normalValue(candidate).equals("big"));
 
-            assertEquals(new Value.Int(11), minimized.getInput());
+            assertEquals(java.util.List.of(new Value.Int(11)), minimized.getArgs());
             assertEquals("big", normalValue(minimized));
         }
     }
@@ -37,7 +37,7 @@ public class MinimizerTest {
                     "(x) => ('a' in x ? x.a : 0) + ('noise' in x ? 0 : 0)");
             Value.ObjectId id = new Value.ObjectId(0);
             Trace trace = new Trace();
-            trace.add(new Trace.Call(new Value.ObjectValue(id)));
+            trace.add(new Trace.Call(java.util.List.of(new Value.ObjectValue(id))));
             trace.add(new Trace.Member(id, "a", new Value.Int(9)));
             trace.add(new Trace.Member(id, "noise", new Value.Int(123)));
             Run run = Runner.run(function, trace, new Random(0), new Coverage());
@@ -49,7 +49,7 @@ public class MinimizerTest {
             assertEquals(new Value.Int(9), object.members.get("a"));
             assertTrue(object.members.containsKey("noise"));
             assertNull(object.members.get("noise"));
-            assertEquals("{a: 9}", Value.format(minimized.getInput(), minimized.getUniverse()));
+            assertEquals("{a: 9}", Value.formatArgs(minimized.getArgs(), minimized.getUniverse()));
         }
     }
 
@@ -67,7 +67,7 @@ public class MinimizerTest {
 
     private static Run run(org.graalvm.polyglot.Value function, Value input) {
         Trace trace = new Trace();
-        trace.add(new Trace.Call(input));
+        trace.add(new Trace.Call(java.util.List.of(input)));
         return Runner.run(function, trace, new Random(0), new Coverage());
     }
 

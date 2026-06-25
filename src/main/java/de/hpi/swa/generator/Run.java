@@ -1,22 +1,24 @@
 package de.hpi.swa.generator;
 
+import java.util.List;
+
 import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.generator.Runner.FunctionResult;
 
 /**
- * A single execution of the fuzzed function: the generated input (with its
+ * A single execution of the fuzzed function: the generated arguments (with their
  * universe), the outcome, the trace of decisions that produced it, and the code
  * coverage it achieved. A {@code Run} is self-contained — everything the
  * analysis needs is reachable from here, no external lookup required.
  */
-public record Run(Universe universe, Value input, FunctionResult output, Trace trace, Coverage coverage) {
+public record Run(Universe universe, List<Value> args, FunctionResult output, Trace trace, Coverage coverage) {
 
     public Universe getUniverse() {
         return universe;
     }
 
-    public Value getInput() {
-        return input;
+    public List<Value> getArgs() {
+        return args;
     }
 
     public FunctionResult getOutput() {
@@ -40,6 +42,6 @@ public record Run(Universe universe, Value input, FunctionResult output, Trace t
     }
 
     public Run withDeduplicatedTrace() {
-        return new Run(universe, input, output, trace.deduplicate(), coverage);
+        return new Run(universe, args, output, trace.deduplicate(), coverage);
     }
 }

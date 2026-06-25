@@ -113,7 +113,10 @@ public final class FuzzCore {
                 }
             }
 
-            Pool pool = new Pool();
+            // How many arguments the function takes, so the fuzzer feeds it the
+            // right number of generated values (falls back to one).
+            int arity = Runner.arity(function);
+            Pool pool = new Pool(arity);
             Random random = new Random();
             List<Run> allResults = new ArrayList<>();
 

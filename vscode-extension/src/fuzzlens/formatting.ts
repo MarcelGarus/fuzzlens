@@ -225,6 +225,22 @@ export function formatValueType(value: Value, universe: Universe): string {
 }
 
 /**
+ * Format a function's argument list for display: a single argument is rendered
+ * bare, several as a comma-separated list (so it reads naturally inside
+ * `fn(...)`). Mirrors the backend's `Value.formatArgs`.
+ */
+export function formatArgs(
+    args: (Partial<Value> & { type?: string })[] | null | undefined,
+    universe: Universe,
+    options: { maxStringLength?: number; maxMembers?: number } = {}
+): string {
+    if (!args || args.length === 0) {
+        return '';
+    }
+    return args.map((arg) => formatValue(arg, universe, options)).join(', ');
+}
+
+/**
  * Format a run result as "input → output" for display.
  */
 export function formatRunResult(
@@ -233,7 +249,7 @@ export function formatRunResult(
 ): string {
     const { maxLength = 80 } = options;
 
-    const inputValue = formatValue(result.input, result.universe);
+    const inputValue = formatArgs(result.args, result.universe);
 
     let output: string;
     if (result.didCrash) {

@@ -83,29 +83,30 @@ public final class Minimizer {
 
         while (evaluations < MAX_EVALUATIONS) {
             boolean committed = false;
-            for (int i = 0; i < current.entries.size() && evaluations < MAX_EVALUATIONS; i++) {
-                Value value = slotValue(current.entries.get(i));
-                if (value == null) {
-                    continue;
-                }
-                boolean isMember = current.entries.get(i) instanceof Member;
-                for (Value candidate : simplerCandidates(value, isMember)) {
-                    if (evaluations >= MAX_EVALUATIONS) {
-                        break;
+            outer: for (int i = 0; i < current.entries.size() && evaluations < MAX_EVALUATIONS; i++) {
+                TraceEntry entry = current.entries.get(i);
+                boolean isMember = entry instanceof Member;
+                // A Call contributes one slot per argument; a Member a single one.
+                for (int sub = 0; sub < slotCount(entry) && evaluations < MAX_EVALUATIONS; sub++) {
+                    Value value = slotValue(entry, sub);
+                    if (value == null) {
+                        continue;
                     }
-                    Trace trial = replaceSlot(current, i, candidate);
-                    Run trialRun = rerun(trial);
-                    if (trialRun != null && satisfies(invariant, trialRun)) {
-                        best = trialRun;
-                        // Re-pin from what actually executed so newly-relevant
-                        // fields become reducible and re-runs stay deterministic.
-                        current = inputTrace(trialRun.getTrace());
-                        committed = true;
-                        break;
+                    for (Value candidate : simplerCandidates(value, isMember)) {
+                        if (evaluations >= MAX_EVALUATIONS) {
+                            break;
+                        }
+                        Trace trial = replaceSlot(current, i, sub, candidate);
+                        Run trialRun = rerun(trial);
+                        if (trialRun != null && satisfies(invariant, trialRun)) {
+                            best = trialRun;
+                            // Re-pin from what actually executed so newly-relevant
+                            // fields become reducible and re-runs stay deterministic.
+                            current = inputTrace(trialRun.getTrace());
+                            committed = true;
+                            break outer;
+                        }
                     }
-                }
-                if (committed) {
-                    break;
                 }
             }
             if (!committed) {
@@ -150,21 +151,34 @@ public final class Minimizer {
         return result;
     }
 
-    private static Value slotValue(TraceEntry entry) {
+    /** Number of independently reducible value slots an entry contributes. */
+    private static int slotCount(TraceEntry entry) {
         return switch (entry) {
-            case Call(var arg) -> arg;
+            case Call(var args) -> args.size();
+            case Member ignored -> 1;
+            default -> 0;
+        };
+    }
+
+    private static Value slotValue(TraceEntry entry, int sub) {
+        return switch (entry) {
+            case Call(var args) -> args.get(sub);
             case Member(var id, var key, var value) -> value;
             default -> null;
         };
     }
 
-    private static Trace replaceSlot(Trace trace, int index, Value newValue) {
+    private static Trace replaceSlot(Trace trace, int index, int sub, Value newValue) {
         Trace result = new Trace();
         for (int i = 0; i < trace.entries.size(); i++) {
             TraceEntry entry = trace.entries.get(i);
             if (i == index) {
                 result.add(switch (entry) {
-                    case Call ignored -> new Call(newValue);
+                    case Call(var args) -> {
+                        var updated = new ArrayList<>(args);
+                        updated.set(sub, newValue);
+                        yield new Call(updated);
+                    }
                     case Member(var id, var key, var value) -> new Member(id, key, newValue);
                     default -> entry;
                 });

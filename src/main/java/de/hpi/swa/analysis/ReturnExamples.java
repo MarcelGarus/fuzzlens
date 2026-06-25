@@ -109,6 +109,6 @@ public final class ReturnExamples {
     }
 
     private static int inputLength(Run run) {
-        return Value.format(run.getInput(), run.getUniverse()).length();
+        return Value.formatArgs(run.getArgs(), run.getUniverse()).length();
     }
 }

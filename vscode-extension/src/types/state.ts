@@ -53,7 +53,8 @@ export type FuzzerOutput = RunResult | AnalysisOutput;
 export interface RunResult {
     type: "run";
     universe: Universe;
-    input: Value;
+    /** The generated arguments passed to the function (one entry per parameter). */
+    args: Value[];
     didCrash: boolean;
     outputType: "Normal" | "Crash";
     typeName?: string;
@@ -84,7 +85,8 @@ export interface ResultGroup {
 /** Sample in Group Run Result */
 export interface RunResultInGroup {
     universe: Universe;
-    input: Value;
+    /** The generated arguments passed to the function (one entry per parameter). */
+    args: Value[];
     didCrash: boolean;
     outputType: "Normal" | "Crash";
     typeName?: string;
@@ -150,7 +152,7 @@ export interface Trace {
 }
 
 export type TraceEntry =
-    | { type: "Call"; arg: Partial<Omit<Value, "type">> }
+    | { type: "Call"; args: Partial<Omit<Value, "type">>[] }
     | { type: "QueryMember"; id: { value: number }; key: string }
     | { type: "Member"; id: { value: number }; key: string; value?: Partial<Omit<Value, "type">> }
     | { type: "Return"; typeName: string; value: string }

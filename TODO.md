@@ -69,8 +69,6 @@ This example also won't work because of the empty dictionary input:
         return d["a"] + d["b"]
 ```
 
-## Multi Argument Functions
-When fuzzing functions with multiple arguments, the fuzzer currently only generates a single argument.
 
 ## Comparison Operations with Primitive Type suggest a type
 When fuzzing functions that perform comparison operations (e.g., ==, <, >) with primitive types (like int, float, string), the fuzzer should suggest generating inputs of the same type to ensure meaningful comparisons. At least they have higher likelihood to not crash, or be a likely input.

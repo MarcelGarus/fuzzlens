@@ -276,7 +276,9 @@ const showExampleAtLine = (editor: vscode.TextEditor, line: number, text: string
 };
 
 const resultToDecorationString = (result: RunResult | RunResultInGroup, maxLength: number = 500): string => {
-    const inputValue = valueToString(result.input, result.universe);
+    const inputValue = (result.args ?? [])
+        .map((arg) => valueToString(arg, result.universe))
+        .join(', ');
 
     let decorationStr: string;
 

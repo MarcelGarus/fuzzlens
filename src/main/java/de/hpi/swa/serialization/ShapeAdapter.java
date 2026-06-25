@@ -39,6 +39,14 @@ public class ShapeAdapter implements JsonSerializer<Shape>, JsonDeserializer<Sha
                 }
                 result.add("members", members);
             }
+            case Shape.Tuple tuple -> {
+                result.addProperty("type", "Tuple");
+                JsonArray elements = new JsonArray();
+                for (Shape element : tuple.elements()) {
+                    elements.add(context.serialize(element, Shape.class));
+                }
+                result.add("elements", elements);
+            }
         }
 
         return result;
@@ -61,6 +69,13 @@ public class ShapeAdapter implements JsonSerializer<Shape>, JsonDeserializer<Sha
                 // Universe
                 // For now, we don't support deserializing ObjectShapes (only serializing them)
                 throw new JsonParseException("Deserializing ObjectShape is not yet supported");
+            }
+            case "Tuple" -> {
+                java.util.List<Shape> elements = new java.util.ArrayList<>();
+                for (JsonElement element : obj.getAsJsonArray("elements")) {
+                    elements.add(context.deserialize(element, Shape.class));
+                }
+                yield new Shape.Tuple(elements);
             }
             default -> throw new JsonParseException("Unknown Shape type: " + type);
         };
