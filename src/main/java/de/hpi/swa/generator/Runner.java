@@ -47,7 +47,6 @@ public abstract class Runner {
         return trace;
     }
 
-    /** Generate {@code arity} independent random argument values. */
     public static List<Value> randomArgs(Universe universe, int arity, Random random) {
         var args = new ArrayList<Value>(arity);
         for (var i = 0; i < arity; i++) {
@@ -56,12 +55,8 @@ public abstract class Runner {
         return args;
     }
 
-    /**
-     * Best-effort number of positional parameters the function declares, so the
-     * fuzzer feeds it the right number of arguments. Python functions expose it via
-     * {@code __code__.co_argcount}, JS functions via {@code length}. Falls back to a
-     * single argument when arity can't be determined.
-     */
+    // Best-effort positional parameter count: Python exposes it via
+    // `__code__.co_argcount`, JS via `length`. Falls back to a single argument.
     public static int arity(org.graalvm.polyglot.Value function) {
         try {
             if (function.hasMember("__code__")) {
@@ -109,7 +104,7 @@ public abstract class Runner {
         record Crash(String message, java.util.List<String> stackTrace) implements FunctionResult {
         }
 
-        /** Display label used for grouping: the concrete type name, or "Crash". */
+        // Label used for grouping: the concrete type name, or "Crash".
         default String label() {
             return switch (this) {
                 case Normal n -> n.typeName();
@@ -157,10 +152,9 @@ public abstract class Runner {
                 try {
                     context.interrupt(INTERRUPT_GRACE);
                 } catch (TimeoutException | IllegalStateException e) {
-                    // If the language cannot be interrupted within the grace
-                    // period, the executing thread may still surface the timeout
-                    // once it reaches a safepoint. The flag keeps classification
-                    // stable either way.
+                    // If the language can't be interrupted within the grace period,
+                    // the executing thread may still surface the timeout at its next
+                    // safepoint. The flag keeps classification stable either way.
                 }
             }, timeoutMillis, TimeUnit.MILLISECONDS);
         }

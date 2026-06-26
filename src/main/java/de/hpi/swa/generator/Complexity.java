@@ -1,34 +1,27 @@
 package de.hpi.swa.generator;
 
-/**
- * A cheap, structural measure of how "complex" a generated input is: higher for
- * larger-magnitude numbers, longer strings, more object fields, fractional
- * doubles, and (only as a tie-breaker) less-canonical characters.
- *
- * <p>Folded into the fuzzer's pool score beside coverage (see {@link Pool}), it
- * favours, among inputs that reach the same code, the simpler one — toward zero,
- * shorter, fewer fields. That gives the fuzzer a built-in pressure toward small
- * inputs, replacing what used to be a separate minimization pass.
- *
- * <p>Magnitudes are on a {@code log1p} scale so that, say, {@code 5} and
- * {@code 5000} differ but neither swamps a coverage difference.
- */
+// A cheap, structural measure of how "complex" a generated input is: higher for
+// larger-magnitude numbers, longer strings, more object fields, fractional doubles,
+// and (only as a tie-breaker) less-canonical characters.
+//
+// Folded into the pool score beside coverage (see Pool), it favours, among inputs
+// that reach the same code, the simpler one — toward zero, shorter, fewer fields.
+//
+// Magnitudes are on a `log1p` scale so that, say, `5` and `5000` differ but neither
+// swamps a coverage difference.
 public final class Complexity {
 
-    /** Per-character weight: small, so string length dominates but ties break toward "smaller" letters. */
+    // Small, so string length dominates but ties break toward "smaller" letters.
     private static final double CHAR_WEIGHT = 0.001;
 
-    /** Base cost of an object value; its fields are counted via the trace's Member entries. */
+    // Base cost of an object value; its fields are counted via the trace's Member entries.
     private static final double OBJECT_BASE = 1.0;
 
     private Complexity() {
     }
 
-    /**
-     * Total complexity of the input a trace describes: the call arguments plus one
-     * contribution per present object field. Observations (queries, returns,
-     * crashes) carry no input and are ignored.
-     */
+    // Total complexity of the input a trace describes: the call arguments plus one
+    // contribution per present object field. Observations carry no input and are ignored.
     public static double of(Trace trace) {
         double total = 0.0;
         for (Trace.TraceEntry entry : trace.entries) {
@@ -50,7 +43,7 @@ public final class Complexity {
         return total;
     }
 
-    /** Complexity of a single value (an object's fields are accounted for at the trace level). */
+    // Complexity of a single value; an object's fields are accounted for at the trace level.
     public static double of(Value value) {
         return switch (value) {
             case Value.Null() -> 0.0;
@@ -79,7 +72,7 @@ public final class Complexity {
         return total;
     }
 
-    /** A small per-character cost with {@code 'a'} the simplest letter; only ever breaks ties. */
+    // A small per-character cost with `'a'` the simplest letter; only ever breaks ties.
     private static double charComplexity(char c) {
         if (c >= 'a' && c <= 'z') {
             return c - 'a';

@@ -5,12 +5,9 @@ import java.util.List;
 import de.hpi.swa.coverage.Coverage;
 import de.hpi.swa.generator.Runner.FunctionResult;
 
-/**
- * A single execution of the fuzzed function: the generated arguments (with their
- * universe), the outcome, the trace of decisions that produced it, and the code
- * coverage it achieved. A {@code Run} is self-contained — everything the
- * analysis needs is reachable from here, no external lookup required.
- */
+// A single execution of the fuzzed function: the generated arguments (with their
+// universe), the outcome, the trace of decisions that produced it, and the coverage
+// it achieved. Self-contained — everything the analysis needs is reachable from here.
 public record Run(Universe universe, List<Value> args, FunctionResult output, Trace trace, Coverage coverage) {
 
     public Universe getUniverse() {

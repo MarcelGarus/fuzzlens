@@ -53,21 +53,17 @@ public class Universe {
         };
     }
 
-    /**
-     * Characters strings are drawn from. Spanning lowercase, uppercase, digits and
-     * a few symbols lets generated strings exercise type/content branches a single
-     * character class can't reach — e.g. {@code any(c.isdigit())} or a
-     * letters-only check — instead of pinning every run to one branch.
-     */
+    // Spanning lowercase, uppercase, digits and symbols lets strings exercise
+    // content branches a single character class can't reach, e.g. `any(c.isdigit())`
+    // or a letters-only check.
     private static final String STRING_ALPHABET =
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-.!@#";
 
-    /** Upper bound on generated string length; lengths range over {@code [0, MAX]}. */
     private static final int MAX_STRING_LENGTH = 12;
 
     String generateString(Random random) {
-        // Variable length (including the empty string) so length-sensitive branches
-        // such as `len(s) < 6` are reachable without relying on minimization.
+        // Variable length (including empty) so length-sensitive branches such as
+        // `len(s) < 6` are reachable.
         var length = random.nextInt(MAX_STRING_LENGTH + 1);
         var sb = new StringBuilder(length);
         for (var i = 0; i < length; i++) {
@@ -80,13 +76,10 @@ public class Universe {
         return STRING_ALPHABET.charAt(random.nextInt(STRING_ALPHABET.length()));
     }
 
-    /**
-     * When mutating a trace decision, either roll a completely fresh value or tweak
-     * the existing one. Fresh generation keeps exploring; tweaking keeps the fuzzer
-     * near inputs that already reached interesting code, so a near-miss can be
-     * nudged over a branch (a length-6 word gaining a digit, an int crossing a
-     * threshold) by a single small edit rather than a lucky from-scratch roll.
-     */
+    // Either roll a fresh value or tweak the existing one. Fresh generation keeps
+    // exploring; tweaking stays near inputs that already reached interesting code, so
+    // a near-miss can be nudged over a branch (a length-6 word gaining a digit, an int
+    // crossing a threshold) by one small edit rather than a lucky from-scratch roll.
     public Value rethinkValue(Value existing, Random random) {
         if (existing == null || random.nextBoolean()) {
             return generateValue(random);
@@ -94,7 +87,7 @@ public class Universe {
         return mutateValue(existing, random);
     }
 
-    /** A small, type-preserving tweak of {@code value} (see {@link #rethinkValue}). */
+    // A small, type-preserving tweak of `value`.
     public Value mutateValue(Value value, Random random) {
         return switch (value) {
             // Null and objects have nothing to tweak in place; explore instead.
@@ -136,13 +129,13 @@ public class Universe {
         }
         var sb = new StringBuilder(s);
         switch (random.nextInt(4)) {
-            case 0 -> // replace a character (can introduce a new character class)
+            case 0 -> // replace (can introduce a new character class)
                 sb.setCharAt(random.nextInt(sb.length()), randomChar(random));
-            case 1 -> // insert a character
+            case 1 ->
                 sb.insert(random.nextInt(sb.length() + 1), randomChar(random));
-            case 2 -> // delete a character
+            case 2 ->
                 sb.deleteCharAt(random.nextInt(sb.length()));
-            default -> { // shift one character's code point by one (e.g. across a boundary)
+            default -> { // shift a code point by one, e.g. across a class boundary
                 var i = random.nextInt(sb.length());
                 sb.setCharAt(i, (char) (sb.charAt(i) + (random.nextBoolean() ? 1 : -1)));
             }

@@ -17,13 +17,10 @@ public class JsonLogger implements ResultLogger {
     private final Gson gson = GsonConfig.createGson();
     private final PrintStream out;
 
-    /**
-     * Request id. Every emitted line carries it as an {@code "id"} property so the
-     * daemon client can demultiplex interleaved responses.
-     */
+    // Request id. Every emitted line carries it as an "id" property so the daemon
+    // client can demultiplex interleaved responses.
     private final Long id;
 
-    /** Lines tagged with {@code id}, flushed eagerly so they stream. */
     public JsonLogger(PrintStream out, Long id) {
         this.out = out;
         this.id = id;
@@ -54,8 +51,7 @@ public class JsonLogger implements ResultLogger {
 
     private void emit(String line) {
         out.println(line);
-        // Flush per line so the client sees snapshots as they stream rather than
-        // buffered until the request completes.
+        // Flush per line so the client sees snapshots as they stream.
         out.flush();
     }
 

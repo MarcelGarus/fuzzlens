@@ -13,20 +13,16 @@ import com.oracle.truffle.api.source.SourceSection;
 import de.hpi.swa.generator.Complexity;
 import de.hpi.swa.generator.Run;
 
-/**
- * Curates one representative example per {@code return} statement in the fuzzed
- * source: the simplest non-crashing input whose coverage reached that line. This
- * is the inline "input → output" shown next to each return — selection that used
- * to run in the editor, now done where the source and per-run coverage both live.
- *
- * <p>The result is a {@link Group} (root → one leaf per return line) so it travels
- * over the same analysis channel as the other snapshots. Each leaf carries the
- * 1-based source line in its {@code Line} aggregation and the chosen run as its
- * single sample.
- */
+// Picks one representative example per `return` statement in the fuzzed source:
+// the simplest non-crashing input whose coverage reached that line, shown inline
+// as "input → output" next to each return.
+//
+// The result is a `Group` (root → one leaf per return line) so it travels over
+// the same analysis channel as the other snapshots. Each leaf carries the 1-based
+// source line in its `Line` aggregation and the chosen run as its single sample.
 public final class ReturnExamples {
 
-    /** Query name this curation is exposed under, alongside the {@link Analysis} queries. */
+    // Query name this is exposed under, alongside the `Analysis` queries.
     public static final String QUERY = "returnExamples";
 
     private static final Pattern RETURN_LINE = Pattern.compile("^\\s*return\\b");
@@ -74,7 +70,7 @@ public final class ReturnExamples {
         return Group.root(children);
     }
 
-    /** The (1-based) user-code lines a run executed — internal/library sources excluded. */
+    // The 1-based user-code lines a run executed — internal/library sources excluded.
     public static Set<Integer> coveredUserLines(Run run) {
         Set<Integer> lines = new HashSet<>();
         if (run.getCoverage() == null) {

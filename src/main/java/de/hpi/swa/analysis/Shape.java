@@ -88,8 +88,7 @@ public sealed interface Shape {
             if (!(obj instanceof ObjectShape other))
                 return false;
 
-            // Compare only the id and the structure of the object, not the universe
-            // reference
+            // Compare id and structure, not the universe reference.
             if (!this.id.equals(other.id))
                 return false;
 
@@ -133,11 +132,8 @@ public sealed interface Shape {
         }
     }
 
-    /**
-     * The shape of an argument list with more than one element (the multi-argument
-     * case). A single argument keeps its bare shape — see {@link #ofArgs} — so
-     * single-argument behaviour is unchanged.
-     */
+    // Shape of an argument list with more than one element. A single argument
+    // keeps its bare shape (see `ofArgs`).
     record Tuple(List<Shape> elements) implements Shape {
         @Override
         public String toString() {
@@ -157,11 +153,8 @@ public sealed interface Shape {
         };
     }
 
-    /**
-     * The shape of a whole argument list. A single argument is represented by its
-     * bare shape (so single-argument analysis is identical to before); zero or
-     * several arguments are wrapped in a {@link Tuple}.
-     */
+    // Shape of a whole argument list: a single argument by its bare shape, zero or
+    // several arguments wrapped in a `Tuple`.
     public static Shape ofArgs(List<Value> args, Universe universe) {
         if (args.size() == 1) {
             return fromValue(args.get(0), universe);

@@ -5,12 +5,9 @@ import java.util.Map;
 
 import de.hpi.swa.generator.Run;
 
-/**
- * A node in an analysis result tree: a display label, a few named aggregations
- * (counts and pre-formatted display strings), optional child groups, and
- * optional example runs. Everything the UI needs is already a string or a
- * number — the extension renders it directly, no interpretation required.
- */
+// A node in an analysis result tree: a label, named aggregations (counts and
+// pre-formatted display strings), child groups, and example runs. Every field is
+// already a string or number, so the UI renders it without interpretation.
 public record Group(String key, Map<String, Object> aggregations, List<Group> children, List<Run> samples) {
 
     public static Group root(List<Group> children) {

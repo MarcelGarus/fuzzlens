@@ -24,54 +24,47 @@ import de.hpi.swa.generator.Run;
 import de.hpi.swa.generator.Runner;
 import de.hpi.swa.generator.Trace;
 
-/**
- * The fuzzing core, driven by the long-lived {@link DaemonMain}.
- *
- * <p>Each call creates a <em>fresh</em> {@link Context} from the supplied
- * {@link Engine}. The context must be fresh because every edit redefines the
- * code, but reusing the engine keeps the language runtime warm — the first
- * GraalPy context costs ~1.5s, every subsequent one ~100ms. That amortization
- * is the whole point of running this from a daemon.
- *
- * <p>Results are streamed through {@code logger} as they are produced. The
- * {@code cancelled} supplier is polled between iterations so an in-flight run
- * can be abandoned the moment a newer edit supersedes it.
- */
+// The fuzzing core, driven by the long-lived `DaemonMain`.
+//
+// Each call creates a fresh `Context` from the supplied `Engine`. The context
+// must be fresh because every edit redefines the code, but reusing the engine
+// keeps the language runtime warm — the first GraalPy context costs ~1.5s, every
+// subsequent one ~100ms. That amortization is the whole point of running this
+// from a daemon.
+//
+// Results are streamed through `logger` as they are produced. The `cancelled`
+// supplier is polled between iterations so an in-flight run can be abandoned the
+// moment a newer edit supersedes it.
 public final class FuzzCore {
 
-    /** Upper bound on traces returned for seeding a later run (see {@link Pool#bestTraces}). */
     private static final int MAX_SEED_TRACES = 64;
 
-    /** Fixed wall-clock budget for one fuzzed function invocation. */
+    // Wall-clock budget for one fuzzed function invocation.
     private static final Duration EXECUTION_TIMEOUT = Duration.ofMillis(250);
 
-    /**
-     * Wall-clock budget for one whole fuzzing job. Caps how long a single function
-     * can hold the (serial) daemon worker, so a slow function — one that keeps
-     * hitting {@link #EXECUTION_TIMEOUT} — can't starve other functions queued
-     * behind it. {@code req.iterations} still bounds the result count (and memory).
-     */
+    // Wall-clock budget for one whole fuzzing job. Caps how long a single function
+    // can hold the (serial) daemon worker, so a slow function — one that keeps
+    // hitting EXECUTION_TIMEOUT — can't starve other functions queued behind it.
+    // req.iterations still bounds the result count (and memory).
     private static final Duration FUZZ_BUDGET = Duration.ofSeconds(3);
 
-    /** How often to emit a snapshot, by wall-clock — so the first feedback is prompt regardless of per-run latency. */
+    // Snapshot cadence, by wall-clock, so first feedback is prompt regardless of
+    // per-run latency.
     private static final Duration SNAPSHOT_INTERVAL = Duration.ofMillis(500);
 
     private FuzzCore() {
     }
 
-    /**
-     * Runs the fuzzer and returns the curated traces worth replaying as seeds on a
-     * later run of the same function (empty if cancelled early). The daemon keeps
-     * these per function and feeds them back in as {@code seedTraces}, which are
-     * replayed before the random fuzzing to re-confirm prior examples quickly.
-     */
+    // Runs the fuzzer and returns the curated traces worth replaying as seeds on a
+    // later run of the same function (empty if cancelled early). The daemon keeps
+    // these per function and feeds them back in as `seedTraces`, replayed before the
+    // random fuzzing to re-confirm prior examples quickly.
     public static List<Trace> runFuzz(Engine engine, CoverageInstrument instrument, FuzzRequest req,
             List<Trace> seedTraces, ResultLogger logger, BooleanSupplier cancelled)
             throws FuzzException, IOException {
 
         String language = req.language != null ? req.language : "python";
 
-        // Build the source from inline code or a file path.
         Source source;
         if (req.code != null) {
             source = Source.newBuilder(language, req.code, "inline").build();
@@ -89,8 +82,8 @@ public final class FuzzCore {
         }
         String sourceText = source.getCharacters().toString();
 
-        // Which queries to run. `returnExamples` is a source-aware curation handled
-        // here rather than as a pure Analysis query, so it's split out.
+        // `returnExamples` is a source-aware curation handled here rather than as a
+        // pure Analysis query, so it's split out.
         boolean returnExamplesWanted = req.queries != null && req.queries.contains(ReturnExamples.QUERY);
         List<String> queries = req.queries == null ? List.of()
                 : req.queries.stream().filter(Analysis.available()::contains).toList();
@@ -101,7 +94,6 @@ public final class FuzzCore {
             // so the daemon can report it as an error.
             Value evalResult = context.eval(source);
 
-            // Determine the function to fuzz.
             Value function;
             if (req.functionName != null && !req.functionName.isEmpty()) {
                 var bindings = context.getBindings(language);
@@ -121,21 +113,18 @@ public final class FuzzCore {
                 }
             }
 
-            // How many arguments the function takes, so the fuzzer feeds it the
-            // right number of generated values (falls back to one).
             int arity = Runner.arity(function);
             Pool pool = new Pool(arity);
             Random random = new Random();
             List<Run> allResults = new ArrayList<>();
 
             // Bound the whole job by wall-clock (covers seed replay + fuzzing) so it
-            // can't monopolise the serial worker. Snapshots fire on a time cadence.
+            // can't monopolise the serial worker.
             long deadlineNanos = System.nanoTime() + FUZZ_BUDGET.toNanos();
             long lastSnapshotNanos = System.nanoTime();
 
             // Replay seed traces first to re-confirm the examples already shown
-            // against freshly-edited code (a fast, deterministic pass) before the
-            // slower random fuzzing below.
+            // against freshly-edited code, before the slower random fuzzing below.
             if (seedTraces != null) {
                 for (Trace seed : seedTraces) {
                     if (cancelled.getAsBoolean()) {
@@ -161,8 +150,8 @@ public final class FuzzCore {
                 }
             }
 
-            // Random fuzzing loop, bounded by both the iteration cap (memory) and the
-            // wall-clock budget (fairness), whichever comes first.
+            // Bounded by both the iteration cap (memory) and the wall-clock budget
+            // (fairness), whichever comes first.
             for (int i = 0; i < req.iterations; i++) {
                 if (cancelled.getAsBoolean()) {
                     return List.of();
@@ -184,20 +173,15 @@ public final class FuzzCore {
                         returnExamplesWanted);
             }
 
-            // Final snapshot reflecting every result. Examples are already curated
-            // toward simple inputs by the pool's complexity-aware scoring, so no
-            // separate minimization pass is needed here.
+            // Final snapshot reflecting every result.
             emitSnapshot(logger, sourceText, allResults, queries, returnExamplesWanted);
 
             return pool.bestTraces(MAX_SEED_TRACES);
         }
     }
 
-    /**
-     * Emit a snapshot if at least {@link #SNAPSHOT_INTERVAL} has elapsed since the
-     * last one, returning the timestamp to track for the next call (unchanged if no
-     * snapshot was emitted).
-     */
+    // Emits a snapshot if at least SNAPSHOT_INTERVAL has elapsed since the last one,
+    // returning the timestamp to track for the next call.
     private static long maybeSnapshot(long lastSnapshotNanos, ResultLogger logger, String sourceText,
             List<Run> allResults, List<String> queries, boolean returnExamplesWanted) {
         if (System.nanoTime() - lastSnapshotNanos < SNAPSHOT_INTERVAL.toNanos()) {
@@ -207,7 +191,7 @@ public final class FuzzCore {
         return System.nanoTime();
     }
 
-    /** Emit one curated snapshot: progress count, the return-line examples, then each analysis. */
+    // Emits one snapshot: progress count, the return-line examples, then each analysis.
     private static void emitSnapshot(ResultLogger logger, String sourceText, List<Run> allResults,
             List<String> queries, boolean returnExamplesWanted) {
         logger.logProgress(allResults.size());
@@ -219,11 +203,9 @@ public final class FuzzCore {
         }
     }
 
-    /**
-     * Begin a fresh coverage run for {@code context}. Entering the context lets the
-     * instrument resolve its per-context accumulator (see {@link CoverageInstrument});
-     * the returned {@link Coverage} is the one the upcoming execution records into.
-     */
+    // Begins a fresh coverage run for `context`. Entering the context lets the
+    // instrument resolve its per-context accumulator; the returned `Coverage` is the
+    // one the upcoming execution records into.
     private static Coverage startRun(Context context, CoverageInstrument instrument) {
         context.enter();
         try {
