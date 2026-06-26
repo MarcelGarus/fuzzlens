@@ -25,11 +25,12 @@ const SAVE_REFUZZ_DELAY_MS = 300;
 
 /**
  * Cap on how many fuzz runs auto-fuzz keeps in flight at once, so scrolling
- * through a large file doesn't flood the daemon's queue. The daemon itself runs
- * jobs serially on its warm engine, so this just bounds how many functions show
- * a "running" indicator at a time. Manual runs share `runningProcesses` too.
+ * through a large file doesn't flood the daemon with requests. The daemon now
+ * runs jobs concurrently on a worker pool, so this is sized to cover a typical
+ * viewport's worth of functions; the daemon's pool bounds the real parallelism.
+ * Manual runs share `runningProcesses` too.
  */
-const MAX_CONCURRENT = 3;
+const MAX_CONCURRENT = 8;
 
 /**
  * Automatically fuzz functions as they come into view and re-fuzz them as the

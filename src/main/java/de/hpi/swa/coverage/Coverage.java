@@ -8,6 +8,8 @@ import java.util.Set;
 import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.api.source.SourceSection;
 
+// Expression-based coverage of source-code, really just a set of
+// `SourceSection`s with convenient helper methods.
 public final class Coverage {
 
     private final Set<SourceSection> covered = new HashSet<SourceSection>();
@@ -42,7 +44,8 @@ public final class Coverage {
                 continue;
             }
             System.err.println(path);
-            var coveredLinesOfSource = coveredLines.getOrDefault(source, new HashSet<Integer>());
+            var coveredLinesOfSource = coveredLines
+                .getOrDefault(source, new HashSet<Integer>());
             for (int i = 1; i <= source.getLineCount(); i++) {
                 var c = coveredLinesOfSource.contains(i) ? '+' : ' ';
                 System.err.println(String.format("%s %s", c, source.getCharacters(i)));

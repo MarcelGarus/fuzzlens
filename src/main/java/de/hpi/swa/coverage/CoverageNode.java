@@ -18,11 +18,11 @@ final class CoverageNode extends ExecutionEventNode {
 
     @Override
     public void onEnter(VirtualFrame frame) {
-        instrument.coverage.addCovered(section);
+        instrument.recordCovered(section);
     }
 
     @Override
     public void onReturnValue(VirtualFrame vFrame, Object result) {
-        // Coverage tracked in onEnter
+        // Coverage tracked in onEnter is enough.
     }
 }

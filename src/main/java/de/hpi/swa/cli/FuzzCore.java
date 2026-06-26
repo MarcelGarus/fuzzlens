@@ -62,10 +62,12 @@ public final class FuzzCore {
     /**
      * Runs the fuzzer and returns the curated traces worth replaying as seeds on a
      * later run of the same function (empty if cancelled early). The daemon keeps
-     * these per function and feeds them back in via {@code req.seedTraces}.
+     * these per function and feeds them back in as {@code seedTraces}, which are
+     * replayed before the random fuzzing to re-confirm prior examples quickly.
      */
     public static List<Trace> runFuzz(Engine engine, CoverageInstrument instrument, FuzzRequest req,
-            ResultLogger logger, BooleanSupplier cancelled) throws FuzzException, IOException {
+            List<Trace> seedTraces, ResultLogger logger, BooleanSupplier cancelled)
+            throws FuzzException, IOException {
 
         String language = req.language != null ? req.language : "python";
 
@@ -134,8 +136,8 @@ public final class FuzzCore {
             // Replay seed traces first to re-confirm the examples already shown
             // against freshly-edited code (a fast, deterministic pass) before the
             // slower random fuzzing below.
-            if (req.seedTraces != null) {
-                for (Trace seed : req.seedTraces) {
+            if (seedTraces != null) {
+                for (Trace seed : seedTraces) {
                     if (cancelled.getAsBoolean()) {
                         return List.of();
                     }
@@ -146,11 +148,11 @@ public final class FuzzCore {
                             || !(seed.entries.get(0) instanceof Trace.Call)) {
                         continue;
                     }
-                    instrument.coverage = new Coverage();
-                    var result = Runner.run(function, seed, random, instrument.coverage, context, EXECUTION_TIMEOUT);
+                    Coverage coverage = startRun(context, instrument);
+                    var result = Runner.run(function, seed, random, coverage, context, EXECUTION_TIMEOUT);
                     var deduplicatedResult = result.withDeduplicatedTrace();
                     if (!didTimeout(result)) {
-                        pool.add(result.getTrace(), instrument.coverage);
+                        pool.add(result.getTrace(), coverage);
                     }
                     allResults.add(deduplicatedResult);
 
@@ -169,12 +171,12 @@ public final class FuzzCore {
                     break;
                 }
                 var trace = pool.createNewTrace();
-                instrument.coverage = new Coverage();
-                var result = Runner.run(function, trace, random, instrument.coverage, context, EXECUTION_TIMEOUT);
+                Coverage coverage = startRun(context, instrument);
+                var result = Runner.run(function, trace, random, coverage, context, EXECUTION_TIMEOUT);
                 var deduplicatedResult = result.withDeduplicatedTrace();
 
                 if (!didTimeout(result)) {
-                    pool.add(result.getTrace(), instrument.coverage);
+                    pool.add(result.getTrace(), coverage);
                 }
                 allResults.add(deduplicatedResult);
 
@@ -214,6 +216,20 @@ public final class FuzzCore {
         }
         for (String name : queries) {
             logger.logAnalysis(name, Analysis.run(name, allResults));
+        }
+    }
+
+    /**
+     * Begin a fresh coverage run for {@code context}. Entering the context lets the
+     * instrument resolve its per-context accumulator (see {@link CoverageInstrument});
+     * the returned {@link Coverage} is the one the upcoming execution records into.
+     */
+    private static Coverage startRun(Context context, CoverageInstrument instrument) {
+        context.enter();
+        try {
+            return instrument.startRun();
+        } finally {
+            context.leave();
         }
     }
 
